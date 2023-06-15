@@ -739,6 +739,7 @@ impl LocalExec {
                 metrics,
                 expensive_checks,
                 &certificate_deny_set,
+                BTreeMap::new(),
                 &tx_info.executed_epoch,
                 epoch_start_timestamp,
                 input_objects,

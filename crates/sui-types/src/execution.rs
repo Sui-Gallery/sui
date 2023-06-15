@@ -28,6 +28,8 @@ pub trait SuiResolver:
     fn as_backing_package_store(&self) -> &dyn BackingPackageStore;
 }
 
+pub type DeletedSharedObjects = BTreeMap<ObjectID, TransactionDigest>;
+
 impl<T> SuiResolver for T
 where
     T: ResourceResolver<Error = SuiError>,
