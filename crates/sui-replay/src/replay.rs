@@ -739,7 +739,6 @@ impl LocalExec {
                 metrics,
                 expensive_checks,
                 &certificate_deny_set,
-                BTreeMap::new(),
                 &tx_info.executed_epoch,
                 epoch_start_timestamp,
                 input_objects,
@@ -1644,7 +1643,8 @@ impl LocalExec {
         self.multi_download_and_store(&loaded_child_refs).await?;
         tokio::task::yield_now().await;
 
-        Ok(InputObjects::new(input_objs))
+        // todo: Laura populate the deleted inputs if any
+        Ok(InputObjects::new(input_objs, vec![]))
     }
 }
 
