@@ -316,7 +316,7 @@ impl Inner {
         });
         for digest in digests.iter() {
             // The digest of the transaction must be inside the map.
-            assert!(input_txns.remove(digest).is_some());
+            assert!(input_txns.shift_remove(digest).is_some());
         }
 
         if input_txns.is_empty() {
@@ -836,7 +836,8 @@ impl TransactionManager {
     pub(crate) fn objects_queue_len_and_age(
         &self,
         keys: Vec<ObjectID>,
-    ) -> Vec<(ObjectID, usize, Option<Duration>)> {
+    // ) -> Vec<(ObjectID, usize, Option<Duration>)> {
+    ) -> Vec<(ObjectID, usize, Vec<Duration>, Option<Duration>)> {
         let inner = self.inner.read();
         keys.into_iter()
             .map(|key| {
@@ -845,6 +846,7 @@ impl TransactionManager {
                 (
                     key,
                     txns.len(),
+                    txns.to_owned().into_iter().map(|(_, time)| time.elapsed()).collect(),
                     txns.first().map(|(_, time)| time.elapsed()),
                 )
             })

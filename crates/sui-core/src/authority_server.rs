@@ -7,12 +7,12 @@ use async_trait::async_trait;
 use mysten_metrics::histogram::Histogram as MystenHistogram;
 use mysten_metrics::spawn_monitored_task;
 use prometheus::{register_int_counter_with_registry, IntCounter, Registry};
-use std::{io, sync::Arc};
+use std::{io, sync::Arc, str::FromStr};
 use sui_network::{
     api::{Validator, ValidatorServer},
     tonic,
 };
-use sui_types::effects::{TransactionEffectsAPI, TransactionEvents};
+use sui_types::{effects::{TransactionEffectsAPI, TransactionEvents}, base_types::SuiAddress};
 use sui_types::messages_consensus::ConsensusTransaction;
 use sui_types::messages_grpc::{
     HandleCertificateResponse, HandleCertificateResponseV2, HandleTransactionResponse,
@@ -28,7 +28,7 @@ use sui_types::{
 };
 use tap::TapFallible;
 use tokio::task::JoinHandle;
-use tracing::{error_span, info, Instrument};
+use tracing::{error_span, error, info, Instrument};
 
 use crate::consensus_adapter::{ConnectionMonitorStatusForTests, LazyNarwhalClient};
 use crate::{
@@ -254,7 +254,7 @@ impl ValidatorService {
         }
 
         let txn_age_threshold = state.max_txn_age_in_queue();
-        for (object_id, queue_len, txn_age) in
+        for (object_id, queue_len, txn_ages, oldest_age) in
             state.transaction_manager().objects_queue_len_and_age(
                 msg.intent_message()
                     .value
@@ -266,6 +266,11 @@ impl ValidatorService {
                     .collect(),
             )
         {
+            let sender = msg.inner().intent_message.value.sender();
+            // if sender.eq(&SuiAddress::from_str("0x90dd89f9c23ecd7bf8a69ecdc3392c7be0d2e6401e0400c9d331bea181bbdf7e").unwrap()) {
+            error!("object_id: {}, queue_len: {}, tx_ages {:?}, oldest {:?}", object_id, queue_len, txn_ages, oldest_age);
+            // }
+
             // When this occurs, most likely transactions piled up on a shared object.
             if queue_len >= MAX_PER_OBJECT_QUEUE_LENGTH {
                 return Err(SuiError::TooManyTransactionsPendingOnObject {
@@ -274,14 +279,24 @@ impl ValidatorService {
                     threshold: MAX_PER_OBJECT_QUEUE_LENGTH,
                 });
             }
-            if let Some(age) = txn_age {
+            if let Some(age) = oldest_age {
+                // error!(
+                //     "Transaction pending on object {} for {} seconds",
+                //     object_id,
+                //     age.as_secs_f64()
+                // );
                 // We have an object whose transactions are taking a long time to execute.
                 if age >= txn_age_threshold {
-                    return Err(SuiError::TooOldTransactionPendingOnObject {
+                    // return Err(SuiError::TooOldTransactionPendingOnObject {
+                    //     object_id,
+                    //     txn_age_sec: age.as_secs(),
+                    //     threshold: txn_age_threshold.as_secs(),
+                    // });
+                    error!(
+                        "Transaction pending on object {} for {} seconds",
                         object_id,
-                        txn_age_sec: age.as_secs(),
-                        threshold: txn_age_threshold.as_secs(),
-                    });
+                        age.as_secs_f64()
+                    );
                 }
             }
         }
