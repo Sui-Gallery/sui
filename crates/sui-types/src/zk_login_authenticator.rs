@@ -26,7 +26,7 @@ mod zk_login_authenticator_test;
 #[derive(Debug, Clone, JsonSchema, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ZkLoginAuthenticator {
-    inputs: ZkLoginInputs,
+    pub inputs: ZkLoginInputs,
     max_epoch: EpochId,
     user_signature: Signature,
     #[serde(skip)]
@@ -103,7 +103,8 @@ impl AuthenticatorTrait for ZkLoginAuthenticator {
     where
         T: Serialize,
     {
-        if author != self.try_into()? {
+        // author must be consistent with the zklogin address derived if verify_author flag is passed as true.
+        if aux_verify_data.verify_author && author != self.try_into()? {
             return Err(SuiError::InvalidAddress);
         }
 

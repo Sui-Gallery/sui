@@ -346,6 +346,7 @@ impl SignatureVerifier {
                     jwks,
                     self.zk_login_params.supported_providers.clone(),
                     self.zk_login_params.env.clone(),
+                    true,
                 );
                 signed_tx
                     .tx_signatures()
@@ -477,7 +478,7 @@ pub fn batch_verify_certificates(
     certs: &[CertifiedTransaction],
 ) -> Vec<SuiResult> {
     // certs.data() is assumed to be verified already by the caller.
-    let verify_params = VerifyParams::new(Default::default(), Vec::new(), Default::default());
+    let verify_params = VerifyParams::new(Default::default(), Vec::new(), Default::default(), true);
     match batch_verify(committee, certs, &[]) {
         Ok(_) => vec![Ok(()); certs.len()],
 
