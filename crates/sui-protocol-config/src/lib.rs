@@ -292,6 +292,10 @@ struct FeatureFlags {
     // Enable receiving sent objects
     #[serde(skip_serializing_if = "is_false")]
     receive_objects: bool,
+
+    // Enable throughput aware consensus submission
+    #[serde(skip_serializing_if = "is_false")]
+    throughput_aware_consensus_submission: bool,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -945,6 +949,10 @@ impl ProtocolConfig {
     pub fn create_authenticator_state_in_genesis(&self) -> bool {
         self.enable_jwk_consensus_updates()
     }
+
+    pub fn throughput_aware_consensus_submission(&self) -> bool {
+        self.feature_flags.throughput_aware_consensus_submission
+    }
 }
 
 #[cfg(not(msim))]
@@ -1514,6 +1522,11 @@ impl ProtocolConfig {
                     cfg.check_zklogin_id_cost_base = Some(200);
                     // zklogin::check_zklogin_issuer
                     cfg.check_zklogin_issuer_cost_base = Some(200);
+                }
+                28 => {
+                    if chain != Chain::Mainnet && chain != Chain::Testnet {
+                        cfg.feature_flags.throughput_aware_consensus_submission = true
+                    }
                 }
                 // Use this template when making changes:
                 //
