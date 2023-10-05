@@ -8,6 +8,7 @@ use sui_types::{
     base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress},
     crypto::{get_key_pair, AccountKeyPair},
     effects::TransactionEffects,
+    execution_status::ExecutionFailureStatus,
     object::Object,
     programmable_transaction_builder::ProgrammableTransactionBuilder,
     transaction::{ProgrammableTransaction, Transaction, TEST_ONLY_GAS_UNIT_FOR_PUBLISH},
@@ -328,6 +329,54 @@ impl TestRunner {
             .await
     }
 
+    pub async fn mutate_and_read(
+        &mut self,
+        so1: (ObjectID, SequenceNumber, bool),
+        so2: (ObjectID, SequenceNumber, bool),
+    ) -> Transaction {
+        let mut delete_object_transaction_builder = ProgrammableTransactionBuilder::new();
+        let arg1 = delete_object_transaction_builder
+            .obj(ObjectArg::SharedObject {
+                id: so1.0,
+                initial_shared_version: so1.1,
+                mutable: so1.2,
+            })
+            .unwrap();
+        let arg2 = delete_object_transaction_builder
+            .obj(ObjectArg::SharedObject {
+                id: so2.0,
+                initial_shared_version: so2.1,
+                mutable: so2.2,
+            })
+            .unwrap();
+        // If both mutable
+        if so1.2 && so1.2 {
+            move_call! {
+                delete_object_transaction_builder,
+                (self.package.0)::o2::mutate_and_mutate(arg1, arg2)
+            };
+        } else if !so1.2 && !so2.2 {
+            move_call! {
+                delete_object_transaction_builder,
+                (self.package.0)::o2::read_and_read(arg1, arg2)
+            };
+        } else if so1.2 {
+            move_call! {
+                delete_object_transaction_builder,
+                (self.package.0)::o2::read_and_write(arg2, arg1)
+            };
+        } else {
+            move_call! {
+                delete_object_transaction_builder,
+                (self.package.0)::o2::read_and_write(arg1, arg2)
+            };
+        }
+        let delete_obj_tx = delete_object_transaction_builder.finish();
+        let gas_id = self.gas_object_ids.pop().unwrap();
+        self.create_signed_transaction_from_pt(delete_obj_tx, gas_id)
+            .await
+    }
+
     pub async fn mutate_shared_obj_tx(
         &mut self,
         shared_obj_id: ObjectID,
@@ -605,6 +654,163 @@ async fn test_mutate_after_delete() {
     assert_eq!(effects.mutated().len(), 1);
 
     assert!(effects.dependencies().contains(digest));
+}
+
+#[tokio::test]
+async fn test_shifting_mutate_and_deletes_multiple_objects() {
+    let mut runner = TestRunner::new("shared_object_deletion").await;
+    let effects1 = runner.create_shared_object().await;
+    let effects2 = runner.create_shared_object().await;
+    let (so1, so1_isv) = {
+        let shared_obj = effects1.created()[0].0;
+        (shared_obj.0, shared_obj.1)
+    };
+    let (so2, so2_isv) = {
+        let shared_obj = effects2.created()[0].0;
+        (shared_obj.0, shared_obj.1)
+    };
+
+    // Test that in the presence of multiple shared objects one of which may be deleted, that we
+    // track versions, notifications, transaction dependencies, and execute correctly.
+
+    // Tx_i^j = Transaction i on shared object So_j
+    // R = Read, M = Write/Mutate, _ = not present
+    //      So_1, So_2
+    // 0 => C   , C  -> Success, Success
+    // 1 => D   , _  -> Success, Tx_0^1, _
+    // 2 => R   , M  -> Fail   , Tx_1^1, Tx_0^2
+    // 3 => M   , R  -> Fail   , Tx_1^1, Tx_2^2
+    // 4 => R   , R  -> Fail   , Tx_3^1, Tx_2^2
+    // 5 => _   , R  -> Success, _     , Tx_2^2
+    // 6 => _   , M  -> Success, _     , Tx_2^2
+    // 7 => M   , M  -> Fail   , Tx_3^1, Tx_6^2
+    // 8 => _   , M  -> Success, _     , Tx_7^2
+
+    // Tx_1
+    let tx_1 = runner.delete_shared_obj_tx(so1, so1_isv).await;
+
+    // Tx_2
+    let tx_2 = runner
+        .mutate_and_read((so1, so1_isv, false), (so2, so2_isv, true))
+        .await;
+
+    // Tx_3
+    let tx_3 = runner
+        .mutate_and_read((so1, so1_isv, true), (so2, so2_isv, false))
+        .await;
+
+    // Tx_4
+    let tx_4 = runner
+        .mutate_and_read((so1, so1_isv, false), (so2, so2_isv, false))
+        .await;
+
+    // Tx_5
+    let tx_5 = runner.read_shared_obj_tx(so2, so2_isv).await;
+
+    // Tx_6
+    let tx_6 = runner.mutate_shared_obj_tx(so2, so2_isv).await;
+
+    // Tx_7
+    let tx_7 = runner
+        .mutate_and_read((so1, so1_isv, true), (so2, so2_isv, true))
+        .await;
+
+    // Tx_8
+    let tx_8 = runner.mutate_shared_obj_tx(so2, so2_isv).await;
+
+    let txs = vec![tx_1, tx_2, tx_3, tx_4, tx_5, tx_6, tx_7, tx_8];
+    let mut certs = vec![];
+    for tx in txs.iter() {
+        certs.push(
+            runner
+                .certify_shared_obj_transaction(tx.clone())
+                .await
+                .unwrap(),
+        )
+    }
+
+    let effects = runner.enqueue_all_and_execute_all(certs).await.unwrap();
+
+    // NB: effects and txs are zero indexed and txs are 1-indexed.
+
+    // Tx_1
+    {
+        let effects = &effects[0];
+        assert!(effects.status().is_ok());
+    }
+
+    // Tx_2
+    {
+        let effects = &effects[1];
+        assert!(effects.status().is_err());
+        assert_eq!(
+            effects.status().clone().unwrap_err().0,
+            ExecutionFailureStatus::InputObjectDeleted
+        );
+        assert!(effects.dependencies().contains(txs[0].digest()));
+    }
+
+    // Tx_3
+    {
+        let effects = &effects[2];
+        assert!(effects.status().is_err());
+        assert_eq!(
+            effects.status().clone().unwrap_err().0,
+            ExecutionFailureStatus::InputObjectDeleted
+        );
+        assert!(effects.dependencies().contains(txs[0].digest()));
+        assert!(effects.dependencies().contains(txs[1].digest()));
+    }
+
+    // Tx_4
+    {
+        let effects = &effects[3];
+        assert!(effects.status().is_err());
+        assert_eq!(
+            effects.status().clone().unwrap_err().0,
+            ExecutionFailureStatus::InputObjectDeleted
+        );
+        assert!(effects.dependencies().contains(txs[2].digest()));
+        assert!(effects.dependencies().contains(txs[1].digest()));
+        assert!(!effects.dependencies().contains(txs[0].digest()));
+    }
+
+    // Tx_5
+    {
+        let effects = &effects[4];
+        assert!(effects.status().is_ok());
+        assert!(effects.dependencies().contains(txs[1].digest()));
+        assert!(!effects.dependencies().contains(txs[2].digest()));
+        assert!(!effects.dependencies().contains(txs[0].digest()));
+    }
+
+    // Tx_6
+    {
+        let effects = &effects[5];
+        assert!(effects.status().is_ok());
+        assert!(effects.dependencies().contains(txs[1].digest()));
+        assert!(!effects.dependencies().contains(txs[2].digest()));
+        assert!(!effects.dependencies().contains(txs[0].digest()));
+    }
+
+    // Tx_7
+    {
+        let effects = &effects[6];
+        assert!(effects.status().is_err());
+        assert_eq!(
+            effects.status().clone().unwrap_err().0,
+            ExecutionFailureStatus::InputObjectDeleted
+        );
+        assert!(effects.dependencies().contains(txs[2].digest()));
+        assert!(effects.dependencies().contains(txs[5].digest()));
+    }
+
+    // Tx_8
+    {
+        let effects = &effects[7];
+        assert!(effects.status().is_ok());
+        assert!(effects.dependencies().contains(txs[6].digest()));
+    }
 }
 
 #[tokio::test]

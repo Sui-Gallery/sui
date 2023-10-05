@@ -1543,6 +1543,7 @@ impl ProtocolConfig {
                     if chain != Chain::Mainnet && chain != Chain::Testnet {
                         cfg.feature_flags.enable_effects_v2 = true;
                         cfg.feature_flags.narwhal_certificate_v2 = true;
+                        // Only allow shared object deletion on devnet
                         cfg.feature_flags.shared_object_deletion = true;
                     }
                 }

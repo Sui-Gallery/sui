@@ -72,7 +72,6 @@ impl<'backing> TemporaryStore<'backing> {
         let mutable_input_refs = input_objects.mutable_inputs();
         let lamport_timestamp = input_objects.lamport_timestamp(&receiving_objects);
         let objects = input_objects.into_object_map();
-
         Self {
             store,
             tx_digest,

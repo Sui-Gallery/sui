@@ -708,9 +708,7 @@ impl AuthorityStore {
                         epoch_store.epoch(),
                     )?;
                 versioned_results.push((*idx, is_available));
-            }
-            // if the object is an already deleted shared object, mark it as available if the version for that object is in the shared deleted marker table.
-            else if self
+            } else if self
                 .get_deleted_shared_object_previous_tx_digest(
                     &input_key.id(),
                     &input_key.version().unwrap(),
@@ -718,6 +716,8 @@ impl AuthorityStore {
                 )?
                 .is_some()
             {
+                // If the object is an already deleted shared object, mark it as available if the
+                // version for that object is in the shared deleted marker table.
                 versioned_results.push((*idx, true));
             } else {
                 versioned_results.push((*idx, false));
@@ -794,7 +794,7 @@ impl AuthorityStore {
                     // 2. or we have some DB corruption
                     let version = shared_locks.get(id).unwrap_or_else(|| {
                         panic!(
-                            "Shared object locks should have been set. tx_digset: {:?}, obj id: {:?}",
+                            "Shared object locks should have been set. tx_digest: {:?}, obj id: {:?}",
                             digest, id
                         )
                     });
