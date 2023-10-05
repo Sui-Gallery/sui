@@ -24,7 +24,7 @@ use sui_types::messages_checkpoint::ECMHLiveObjectSetDigest;
 use sui_types::object::Owner;
 use sui_types::storage::{
     get_module_by_id, BackingPackageStore, ChildObjectResolver, MarkerValue, ObjectKey,
-    ObjectStore, ReceivedMarkerQuery, SHARED_OBJECT_MARKER_VERSION,
+    ObjectStore, ReceivedMarkerQuery,
 };
 use sui_types::sui_system_state::get_sui_system_state;
 use sui_types::{base_types::SequenceNumber, fp_bail, fp_ensure, storage::ParentSync};
@@ -404,15 +404,13 @@ impl AuthorityStore {
             .contains_key(digest)?)
     }
 
-    pub fn get_deleted_shared_object_last_digest(
+    pub fn get_deleted_shared_object_previous_tx_digest(
         &self,
         object_id: &ObjectID,
+        version: &SequenceNumber,
         epoch_id: EpochId,
     ) -> Result<Option<TransactionDigest>, TypedStoreError> {
-        let object_key = (
-            epoch_id,
-            ObjectKey(*object_id, SHARED_OBJECT_MARKER_VERSION),
-        );
+        let object_key = (epoch_id, ObjectKey(*object_id, *version));
 
         match self
             .perpetual_tables
@@ -711,9 +709,13 @@ impl AuthorityStore {
                     )?;
                 versioned_results.push((*idx, is_available));
             }
-            // if the object is an already deleted shared object, mark it as available to continue execution
+            // if the object is an already deleted shared object, mark it as available if the version for that object is in the shared deleted marker table.
             else if self
-                .get_deleted_shared_object_last_digest(&input_key.id(), epoch_store.epoch())?
+                .get_deleted_shared_object_previous_tx_digest(
+                    &input_key.id(),
+                    &input_key.version().unwrap(),
+                    epoch_store.epoch(),
+                )?
                 .is_some()
             {
                 versioned_results.push((*idx, true));
@@ -802,10 +804,10 @@ impl AuthorityStore {
                         None => {
                             // If the object was deleted by a concurrently certified tx then return this separately
                             let epoch = epoch_store.committee().epoch;
-                            if let Some(dependency) = self.get_deleted_shared_object_last_digest(id, epoch)? {
+                            if let Some(dependency) = self.get_deleted_shared_object_previous_tx_digest(id, version, epoch)? {
                                 deleted_shared_objects.push((*id, *version, dependency));
                             } else {
-                                panic!("All dependencies of tx {:?} should have been executed now, but Shared Object id: {}, version: {} is absent", digest, *id, *version);
+                                panic!("All dependencies of tx {:?} should have been executed now, but Shared Object id: {}, version: {} is absent in epoch {}", digest, *id, *version, epoch);
                             }
                         }
                     };
@@ -1012,17 +1014,6 @@ impl AuthorityStore {
             iter::once((transaction_digest, transaction.serializable_ref())),
         )?;
 
-        // If there were any deleted shared objects as input to this transaction, update the marker table with our digest to be used as dependency of
-        // the next transaction that takes this object as an input
-        for (obj_id, _) in inner_temporary_store.deleted_shared_object_keys.clone() {
-            let object_key = (epoch_id, ObjectKey(obj_id, SHARED_OBJECT_MARKER_VERSION));
-
-            write_batch.insert_batch(
-                &self.perpetual_tables.object_per_epoch_marker_table,
-                iter::once((object_key, MarkerValue::SharedDeleted(*transaction_digest))),
-            )?;
-        }
-
         // Add batched writes for objects and locks.
         let effects_digest = effects.digest();
         self.update_objects_and_locks(
@@ -1087,6 +1078,29 @@ impl AuthorityStore {
         self.objects_lock_table.acquire_read_locks(digests).await
     }
 
+    pub(crate) fn deleted_mutably_accessed_shared_objects(
+        effects: &TransactionEffects,
+        shared_inputs: impl Iterator<Item = SharedInputObject>,
+    ) -> (SequenceNumber, Vec<ObjectID>) {
+        let mutable_shared_objects: HashSet<_> = shared_inputs
+            .into_iter()
+            .filter_map(
+                |SharedInputObject { mutable, id, .. }| if mutable { Some(id) } else { None },
+            )
+            .collect();
+        let deleted_accessed_objects = effects
+            .input_shared_objects()
+            .into_iter()
+            .filter(move |((object_id, _, digest), _)| {
+                // We only smear shared objects that are taken by value/mutably.
+                digest == &ObjectDigest::OBJECT_DIGEST_DELETED
+                    && mutable_shared_objects.contains(object_id)
+            })
+            .map(|((object_id, _, _), _)| object_id)
+            .collect();
+        (effects.lamport_version(), deleted_accessed_objects)
+    }
+
     /// Helper function for updating the objects and locks in the state
     async fn update_objects_and_locks(
         &self,
@@ -1098,7 +1112,6 @@ impl AuthorityStore {
     ) -> SuiResult {
         let InnerTemporaryStore {
             input_objects,
-            deleted_shared_object_keys: _,
             mutable_inputs,
             written,
             events,
@@ -1134,43 +1147,50 @@ impl AuthorityStore {
                 .collect()
         };
 
-        // We record any received or deleted objects since they could be pruned.
-        let markers_to_place = received_objects
-            .iter()
-            .map(|(object_id, version, _)| {
+        // We record any received or deleted objects since they could be pruned, and smear shared
+        // object deletions in the marker table. For deleted entries in the marker table we need to
+        // make sure we don't accidentally overwite entries.
+        let markers_to_place = {
+            let received = received_objects.iter().map(|(object_id, version, _)| {
                 (
                     (epoch_id, ObjectKey(*object_id, *version)),
                     MarkerValue::Received,
                 )
-            })
-            .chain(deleted.clone().into_iter().map(|(object_id, version)| {
-                (
-                    (epoch_id, ObjectKey(object_id, version)),
-                    MarkerValue::OwnedDeleted,
-                )
-            }));
+            });
 
-        // get shared deleted objects and write them to the object marker table
-        write_batch.insert_batch(
-            &self.perpetual_tables.object_per_epoch_marker_table,
-            deleted
-                .iter()
-                .filter(|(object_id, _)| {
-                    if let Some(object) = input_objects.get(object_id) {
-                        return object.is_shared();
-                    }
-                    false
-                })
-                .map(|(object_id, _)| {
+            let deleted = deleted.into_iter().map(|(object_id, version)| {
+                let object_key = (epoch_id, ObjectKey(object_id, version));
+                if input_objects
+                    .get(&object_id)
+                    .is_some_and(|object| object.is_shared())
+                {
                     (
-                        (
-                            epoch_id,
-                            ObjectKey(*object_id, SHARED_OBJECT_MARKER_VERSION),
-                        ),
+                        object_key,
                         MarkerValue::SharedDeleted(*transaction.digest()),
                     )
-                }),
-        )?;
+                } else {
+                    (object_key, MarkerValue::OwnedDeleted)
+                }
+            });
+
+            // We "smear" shared deleted objects in the marker table to allow for proper sequencing
+            // of transactions that are submitted after the deletion of the shared object.
+            // NB: that we do _not_ smear shared objects that were taken immutably in the
+            // transaction.
+            let (smeared_version, smeared_objects) = Self::deleted_mutably_accessed_shared_objects(
+                effects,
+                transaction.shared_input_objects(),
+            );
+            let shared_smears = smeared_objects.into_iter().map(move |object_id| {
+                let object_key = (epoch_id, ObjectKey(object_id, smeared_version));
+                (
+                    object_key,
+                    MarkerValue::SharedDeleted(*transaction.digest()),
+                )
+            });
+
+            received.chain(deleted).chain(shared_smears)
+        };
 
         write_batch.insert_batch(
             &self.perpetual_tables.object_per_epoch_marker_table,

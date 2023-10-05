@@ -27,7 +27,6 @@ use prometheus::{
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::cmp::max;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Write;
@@ -1142,15 +1141,6 @@ impl AuthorityState {
         Ok((effects, execution_error_opt))
     }
 
-    /// new function to generate next version of deleted shared object
-    fn get_next_version(
-        &self,
-        effects: &TransactionEffects,
-        smeared_version: SequenceNumber,
-    ) -> SequenceNumber {
-        max(effects.lamport_version(), smeared_version.next())
-    }
-
     async fn commit_cert_and_notify(
         &self,
         certificate: &VerifiedExecutableTransaction,
@@ -1205,12 +1195,17 @@ impl AuthorityState {
             });
         output_keys.extend(deleted_output_keys);
 
-        // add transactions that operate on deleted shared objects to the outputkeys that then get sent to notify_commit
-        for (id, seq) in inner_temporary_store.deleted_shared_object_keys.iter() {
-            let next_version = self.get_next_version(effects, *seq);
+        // For any previously deleted shared objects that appeared mutably in the transaction,
+        // synthesize a notification for the next version of the object.
+        let (smeared_version, deleted_accessed_objects) =
+            AuthorityStore::deleted_mutably_accessed_shared_objects(
+                effects,
+                certificate.shared_input_objects(),
+            );
+        for object_id in deleted_accessed_objects.into_iter() {
             let key = InputKey::VersionedObject {
-                id: *id,
-                version: next_version,
+                id: object_id,
+                version: smeared_version,
             };
             output_keys.push(key);
         }

@@ -5,6 +5,7 @@ use futures::join;
 use rand::distributions::Distribution;
 use std::ops::Deref;
 use std::time::{Duration, SystemTime};
+use sui_core::authority::EffectsNotifyRead;
 use sui_core::consensus_adapter::position_submit_certificate;
 use sui_json_rpc_types::SuiTransactionBlockEffectsAPI;
 use sui_macros::{register_fail_point_async, sim_test};
@@ -100,7 +101,7 @@ async fn shared_object_deletion_multi_certs() {
         sleep(Duration::from_millis(delay)).await;
     });
 
-    let test_cluster = TestClusterBuilder::new().build().await;
+    let mut test_cluster = TestClusterBuilder::new().build().await;
 
     let (package, counter) = publish_basics_package_and_make_counter(&test_cluster.wallet).await;
     let package_id = package.0;
@@ -187,8 +188,6 @@ async fn shared_object_deletion_multi_certs() {
         .notify_read_executed_effects(vec![inc_tx_a_digest, inc_tx_b_digest])
         .await
         .unwrap();
-
-    wait_for_t
 }
 
 /// End-to-end shared transaction test for a Sui validator. It does not test the client or wallet,

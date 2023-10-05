@@ -312,6 +312,7 @@ impl TransactionEffects {
     }
 }
 
+#[derive(Eq, PartialEq, Clone, Debug)]
 pub enum InputSharedObjectKind {
     Mutate,
     ReadOnly,

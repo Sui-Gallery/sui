@@ -351,6 +351,29 @@ impl TestRunner {
             .await
     }
 
+    pub async fn read_shared_obj_tx(
+        &mut self,
+        shared_obj_id: ObjectID,
+        initial_shared_version: SequenceNumber,
+    ) -> Transaction {
+        let mut delete_object_transaction_builder = ProgrammableTransactionBuilder::new();
+        let arg = delete_object_transaction_builder
+            .obj(ObjectArg::SharedObject {
+                id: shared_obj_id,
+                initial_shared_version,
+                mutable: false,
+            })
+            .unwrap();
+        move_call! {
+            delete_object_transaction_builder,
+            (self.package.0)::o2::read_o2(arg)
+        };
+        let delete_obj_tx = delete_object_transaction_builder.finish();
+        let gas_id = self.gas_object_ids.pop().unwrap();
+        self.create_signed_transaction_from_pt(delete_obj_tx, gas_id)
+            .await
+    }
+
     pub async fn wrap_shared_obj_tx(
         &mut self,
         shared_obj_id: ObjectID,
@@ -461,11 +484,12 @@ impl TestRunner {
     pub fn object_exists_in_marker_table(
         &mut self,
         object_id: &ObjectID,
+        version: &SequenceNumber,
         epoch: EpochId,
     ) -> Option<TransactionDigest> {
         self.authority_state
             .database
-            .get_deleted_shared_object_last_digest(object_id, epoch)
+            .get_deleted_shared_object_previous_tx_digest(object_id, version, epoch)
             .unwrap()
     }
 }
@@ -515,14 +539,14 @@ async fn test_delete_shared_object() {
 
     assert_eq!(
         user1
-            .object_exists_in_marker_table(&deleted_obj_id, 0)
+            .object_exists_in_marker_table(&deleted_obj_id, &effects.lamport_version(), 0)
             .unwrap(),
         *effects.transaction_digest(),
     );
 
     assert_eq!(
         user1
-            .object_exists_in_marker_table(&deleted_obj_id, 0)
+            .object_exists_in_marker_table(&deleted_obj_id, &effects.lamport_version(), 0)
             .unwrap(),
         *effects.transaction_digest(),
     );
@@ -655,6 +679,138 @@ async fn test_mutate_after_delete_enqueued() {
 }
 
 #[tokio::test]
+async fn test_mutate_interleaved_read_only_enqueued_after_delete() {
+    let mut user_1 = TestRunner::new("shared_object_deletion").await;
+    let effects = user_1.create_shared_object().await;
+
+    assert_eq!(effects.created().len(), 1);
+
+    let shared_obj = effects.created()[0].0;
+    let shared_obj_id = shared_obj.0;
+    let initial_shared_version = shared_obj.1;
+
+    let mutate_obj_tx = user_1
+        .mutate_shared_obj_tx(shared_obj_id, initial_shared_version)
+        .await;
+
+    let mutate_obj_tx_2 = user_1
+        .mutate_shared_obj_tx(shared_obj_id, initial_shared_version)
+        .await;
+
+    let read_obj_tx_1 = user_1
+        .read_shared_obj_tx(shared_obj_id, initial_shared_version)
+        .await;
+
+    let read_obj_tx_2 = user_1
+        .read_shared_obj_tx(shared_obj_id, initial_shared_version)
+        .await;
+
+    let delete_obj_tx = user_1
+        .delete_shared_obj_tx(shared_obj_id, initial_shared_version)
+        .await;
+
+    let delete_cert = user_1
+        .certify_shared_obj_transaction(delete_obj_tx)
+        .await
+        .unwrap();
+
+    let read_cert_1 = user_1
+        .certify_shared_obj_transaction(read_obj_tx_1)
+        .await
+        .unwrap();
+
+    let mutate_cert = user_1
+        .certify_shared_obj_transaction(mutate_obj_tx)
+        .await
+        .unwrap();
+
+    let read_cert_2 = user_1
+        .certify_shared_obj_transaction(read_obj_tx_2)
+        .await
+        .unwrap();
+
+    let mutate_cert_2 = user_1
+        .certify_shared_obj_transaction(mutate_obj_tx_2)
+        .await
+        .unwrap();
+
+    let txs = vec![
+        delete_cert,
+        read_cert_1,
+        mutate_cert,
+        read_cert_2,
+        mutate_cert_2,
+    ];
+
+    let res = user_1.enqueue_all_and_execute_all(txs).await.unwrap();
+
+    let delete_digest = res.get(0).unwrap().transaction_digest();
+    let first_mutate_digest = res.get(2).unwrap().transaction_digest();
+
+    {
+        let effects = res.get(1).unwrap();
+
+        assert!(effects.status().is_err());
+        assert_eq!(effects.deleted().len(), 0);
+
+        assert!(effects.created().is_empty());
+        assert!(effects.unwrapped_then_deleted().is_empty());
+        assert!(effects.wrapped().is_empty());
+
+        // The gas coin gets mutated
+        assert_eq!(effects.mutated().len(), 1);
+    }
+
+    {
+        let effects = res.get(2).unwrap();
+        assert!(effects.status().is_err());
+        assert_eq!(effects.deleted().len(), 0);
+
+        assert!(effects.created().is_empty());
+        assert!(effects.unwrapped_then_deleted().is_empty());
+        assert!(effects.wrapped().is_empty());
+
+        // The gas coin gets mutated
+        assert_eq!(effects.mutated().len(), 1);
+
+        assert!(effects.dependencies().contains(delete_digest));
+    }
+
+    {
+        let effects = res.get(3).unwrap();
+        assert!(effects.status().is_err());
+        assert_eq!(effects.deleted().len(), 0);
+
+        assert!(effects.created().is_empty());
+        assert!(effects.unwrapped_then_deleted().is_empty());
+        assert!(effects.wrapped().is_empty());
+
+        // The gas coin gets mutated
+        assert_eq!(effects.mutated().len(), 1);
+
+        // NB: the tx dependency is now on the mutating tx
+        assert!(effects.dependencies().contains(first_mutate_digest));
+    }
+
+    {
+        let effects = res.get(4).unwrap();
+        assert!(effects.status().is_err());
+        assert_eq!(effects.deleted().len(), 0);
+
+        assert!(effects.created().is_empty());
+        assert!(effects.unwrapped_then_deleted().is_empty());
+        assert!(effects.wrapped().is_empty());
+
+        // The gas coin gets mutated
+        assert_eq!(effects.mutated().len(), 1);
+
+        // NB: the tx dependency is still on the first mutation tx and not on the intervening read
+        // of the SO.
+        assert!(effects.dependencies().contains(first_mutate_digest));
+    }
+}
+
+#[tokio::test]
 async fn test_delete_with_shared_after_mutate_enqueued() {
     let mut user_1 = TestRunner::new("shared_object_deletion").await;
     let effects_0 = user_1.create_shared_object().await;
@@ -749,7 +905,7 @@ async fn test_delete_with_shared_after_mutate_enqueued() {
     assert!(delete_effects.status().is_ok());
 
     assert!(user_1
-        .object_exists_in_marker_table(&shared_obj_id, 0)
+        .object_exists_in_marker_table(&shared_obj_id, &delete_effects.lamport_version(), 0)
         .is_some());
 
     let mutate_effects = res.get(1).unwrap();

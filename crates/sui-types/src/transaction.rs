@@ -2452,6 +2452,11 @@ impl InputObjects {
             .iter()
             .filter(|(kind, _)| matches!(kind, InputObjectKind::SharedMoveObject { .. }))
             .map(|(_, obj)| obj.compute_object_reference())
+            .chain(
+                self.deleted
+                    .iter()
+                    .map(|(id, version, _)| (*id, *version, ObjectDigest::OBJECT_DIGEST_DELETED)),
+            )
             .collect()
     }
 
@@ -2515,17 +2520,11 @@ impl InputObjects {
         self.objects.iter().map(|(kind, _)| kind)
     }
 
-    pub fn into_object_map(self) -> (BTreeMap<ObjectID, Object>, Vec<(ObjectID, SequenceNumber)>) {
-        (
-            self.objects
-                .into_iter()
-                .map(|(_, object)| (object.id(), object))
-                .collect(),
-            self.deleted
-                .into_iter()
-                .map(|(id, version, _)| (id, version))
-                .collect(),
-        )
+    pub fn into_object_map(self) -> BTreeMap<ObjectID, Object> {
+        self.objects
+            .into_iter()
+            .map(|(_, object)| (object.id(), object))
+            .collect()
     }
 }
 
