@@ -1081,14 +1081,14 @@ impl AuthorityStore {
     pub(crate) fn deleted_mutably_accessed_shared_objects(
         effects: &TransactionEffects,
         shared_inputs: impl Iterator<Item = SharedInputObject>,
-    ) -> (SequenceNumber, Vec<ObjectID>) {
+    ) -> Vec<ObjectID> {
         let mutable_shared_objects: HashSet<_> = shared_inputs
             .into_iter()
             .filter_map(
                 |SharedInputObject { mutable, id, .. }| if mutable { Some(id) } else { None },
             )
             .collect();
-        let deleted_accessed_objects = effects
+        effects
             .input_shared_objects()
             .into_iter()
             .filter(move |((object_id, _, digest), _)| {
@@ -1097,8 +1097,7 @@ impl AuthorityStore {
                     && mutable_shared_objects.contains(object_id)
             })
             .map(|((object_id, _, _), _)| object_id)
-            .collect();
-        (effects.lamport_version(), deleted_accessed_objects)
+            .collect()
     }
 
     /// Helper function for updating the objects and locks in the state
@@ -1119,6 +1118,7 @@ impl AuthorityStore {
             loaded_runtime_objects: _,
             no_extraneous_module_bytes: _,
             runtime_packages_loaded_from_db: _,
+            lamport_version,
         } = inner_temporary_store;
         trace!(written =? written.iter().map(|(obj_id, obj)| (obj_id, obj.version())).collect::<Vec<_>>(),
                "batch_update_objects: temp store written");
@@ -1177,12 +1177,12 @@ impl AuthorityStore {
             // of transactions that are submitted after the deletion of the shared object.
             // NB: that we do _not_ smear shared objects that were taken immutably in the
             // transaction.
-            let (smeared_version, smeared_objects) = Self::deleted_mutably_accessed_shared_objects(
+            let smeared_objects = Self::deleted_mutably_accessed_shared_objects(
                 effects,
                 transaction.shared_input_objects(),
             );
             let shared_smears = smeared_objects.into_iter().map(move |object_id| {
-                let object_key = (epoch_id, ObjectKey(object_id, smeared_version));
+                let object_key = (epoch_id, ObjectKey(object_id, lamport_version));
                 (
                     object_key,
                     MarkerValue::SharedDeleted(*transaction.digest()),

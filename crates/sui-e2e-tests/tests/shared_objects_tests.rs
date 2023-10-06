@@ -104,7 +104,7 @@ async fn shared_object_deletion_multiple_times() {
     let mut txs = vec![];
     for coin_ref in gas_coins.into_iter() {
         let transaction = test_cluster
-            .test_transaction_builder_with_gas_object(sender, coin_ref.clone())
+            .test_transaction_builder_with_gas_object(sender, coin_ref)
             .await
             .call_counter_delete(package_id, counter_id, counter_initial_shared_version)
             .build();

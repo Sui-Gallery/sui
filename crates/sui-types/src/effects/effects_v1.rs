@@ -162,10 +162,6 @@ impl TransactionEffectsAPI for TransactionEffectsV1 {
         &self.gas_used
     }
 
-    fn lamport_version(&self) -> SequenceNumber {
-        self.gas_object().0 .1
-    }
-
     fn status_mut_for_testing(&mut self) -> &mut ExecutionStatus {
         &mut self.status
     }

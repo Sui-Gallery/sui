@@ -350,7 +350,7 @@ impl TestRunner {
             })
             .unwrap();
         // If both mutable
-        if so1.2 && so1.2 {
+        if so1.2 && so2.2 {
             move_call! {
                 delete_object_transaction_builder,
                 (self.package.0)::o2::mutate_and_mutate(arg1, arg2)
@@ -588,14 +588,7 @@ async fn test_delete_shared_object() {
 
     assert_eq!(
         user1
-            .object_exists_in_marker_table(&deleted_obj_id, &effects.lamport_version(), 0)
-            .unwrap(),
-        *effects.transaction_digest(),
-    );
-
-    assert_eq!(
-        user1
-            .object_exists_in_marker_table(&deleted_obj_id, &effects.lamport_version(), 0)
+            .object_exists_in_marker_table(&deleted_obj_id, &deleted_obj_ver, 0)
             .unwrap(),
         *effects.transaction_digest(),
     );
@@ -1109,9 +1102,10 @@ async fn test_delete_with_shared_after_mutate_enqueued() {
 
     let delete_effects = res.get(0).unwrap();
     assert!(delete_effects.status().is_ok());
+    let deleted_obj_ver = delete_effects.deleted()[0].1;
 
     assert!(user_1
-        .object_exists_in_marker_table(&shared_obj_id, &delete_effects.lamport_version(), 0)
+        .object_exists_in_marker_table(&shared_obj_id, &deleted_obj_ver, 0)
         .is_some());
 
     let mutate_effects = res.get(1).unwrap();

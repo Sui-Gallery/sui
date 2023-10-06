@@ -59,7 +59,7 @@ impl Payload for SharedCounterDeletionTestPayload {
         }
 
         if self.create_sent {
-            let ((oid, initial_version, _), _) = effects.created().get(0).unwrap().clone();
+            let ((oid, initial_version, _), _) = *effects.created().get(0).unwrap();
             self.is_counter_deleted = false;
             self.create_sent = false;
             self.counter_id = oid;

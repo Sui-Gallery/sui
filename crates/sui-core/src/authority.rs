@@ -1197,11 +1197,11 @@ impl AuthorityState {
 
         // For any previously deleted shared objects that appeared mutably in the transaction,
         // synthesize a notification for the next version of the object.
-        let (smeared_version, deleted_accessed_objects) =
-            AuthorityStore::deleted_mutably_accessed_shared_objects(
-                effects,
-                certificate.shared_input_objects(),
-            );
+        let smeared_version = inner_temporary_store.lamport_version;
+        let deleted_accessed_objects = AuthorityStore::deleted_mutably_accessed_shared_objects(
+            effects,
+            certificate.shared_input_objects(),
+        );
         for object_id in deleted_accessed_objects.into_iter() {
             let key = InputKey::VersionedObject {
                 id: object_id,
