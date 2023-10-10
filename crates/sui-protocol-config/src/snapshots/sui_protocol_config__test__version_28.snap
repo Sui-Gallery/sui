@@ -38,7 +38,7 @@ feature_flags:
   throughput_aware_consensus_submission: true
   consensus_throughput_profile_ranges:
     - 0
-    - 3000
+    - 1000
 max_tx_size_bytes: 131072
 max_input_objects: 2048
 max_size_written_objects: 5000000
