@@ -1068,6 +1068,14 @@ impl SuiNode {
             state.metrics.clone(),
         ));
 
+        warn!(
+            "Throughput profile ranges 1: {:?} for version {:?}",
+            r,
+            epoch_store
+                .protocol_config()
+                .consensus_throughput_profile_ranges()
+        );
+
         let r = epoch_store
             .protocol_config()
             .consensus_throughput_profile_ranges()
@@ -1084,6 +1092,12 @@ impl SuiNode {
         } else {
             ThroughputProfileRanges::new(&r)
         };
+
+        warn!(
+            "Throughput profile ranges 2: {:?} for version {:?}",
+            r,
+            epoch_store.protocol_config().version
+        );
 
         let throughput_profiler = Arc::new(ConsensusThroughputProfiler::new(
             throughput_calculator.clone(),
