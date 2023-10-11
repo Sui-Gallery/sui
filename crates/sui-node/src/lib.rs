@@ -1070,10 +1070,10 @@ impl SuiNode {
 
         warn!(
             "Throughput profile ranges 1: {:?} for version {:?}",
-            r,
             epoch_store
                 .protocol_config()
-                .consensus_throughput_profile_ranges()
+                .consensus_throughput_profile_ranges(),
+            epoch_store.protocol_config().version
         );
 
         let r = epoch_store
