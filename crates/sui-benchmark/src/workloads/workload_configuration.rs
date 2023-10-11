@@ -179,6 +179,8 @@ impl WorkloadConfiguration {
             shared_counter_hotness_factor,
             shared_counter_max_tip,
             reference_gas_price,
+            duration,
+            workload_group,
         );
         workload_builders.push(shared_deletion_workload);
         let transfer_workload = TransferObjectWorkloadBuilder::from(

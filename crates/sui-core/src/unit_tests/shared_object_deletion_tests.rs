@@ -1488,7 +1488,7 @@ async fn test_owned_object_version_increments_on_cert_denied() {
         .await
         .unwrap();
 
-    let (TransactionEffects::V1(_delete_effects), _error) = user_1
+    user_1
         .execute_sequenced_certificate_to_effects(delete_cert)
         .await
         .unwrap();
@@ -1496,7 +1496,7 @@ async fn test_owned_object_version_increments_on_cert_denied() {
     let version = user_1.get_object_latest_version(owned_obj_id);
     assert_eq!(version, 4.into());
 
-    let (TransactionEffects::V1(_mutate_effects), _error) = user_1
+    user_1
         .execute_sequenced_certificate_to_effects(mutate_cert)
         .await
         .unwrap();
