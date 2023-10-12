@@ -783,7 +783,7 @@ impl AuthorityStore {
         let mut result = Vec::new();
         for kind in objects.iter() {
             match kind {
-                InputObjectKind::SharedMoveObject { id, .. } => {
+                InputObjectKind::SharedMoveObject { id, mutable, .. } => {
                     let shared_locks = shared_locks_cell.get_or_try_init(|| {
                         Ok::<HashMap<ObjectID, SequenceNumber>, SuiError>(
                             epoch_store.get_shared_locks(digest)?.into_iter().collect(),
@@ -805,7 +805,7 @@ impl AuthorityStore {
                             // If the object was deleted by a concurrently certified tx then return this separately
                             let epoch = epoch_store.committee().epoch;
                             if let Some(dependency) = self.get_deleted_shared_object_previous_tx_digest(id, version, epoch)? {
-                                deleted_shared_objects.push((*id, *version, dependency));
+                                deleted_shared_objects.push((*id, *version, *mutable, dependency));
                             } else {
                                 panic!("All dependencies of tx {:?} should have been executed now, but Shared Object id: {}, version: {} is absent in epoch {}", digest, *id, *version, epoch);
                             }
@@ -1078,28 +1078,6 @@ impl AuthorityStore {
         self.objects_lock_table.acquire_read_locks(digests).await
     }
 
-    pub(crate) fn deleted_mutably_accessed_shared_objects(
-        effects: &TransactionEffects,
-        shared_inputs: impl Iterator<Item = SharedInputObject>,
-    ) -> Vec<ObjectID> {
-        let mutable_shared_objects: HashSet<_> = shared_inputs
-            .into_iter()
-            .filter_map(
-                |SharedInputObject { mutable, id, .. }| if mutable { Some(id) } else { None },
-            )
-            .collect();
-        effects
-            .input_shared_objects()
-            .into_iter()
-            .filter(move |((object_id, _, digest), _)| {
-                // We only smear shared objects that are taken by value/mutably.
-                digest == &ObjectDigest::OBJECT_DIGEST_DELETED
-                    && mutable_shared_objects.contains(object_id)
-            })
-            .map(|((object_id, _, _), _)| object_id)
-            .collect()
-    }
-
     /// Helper function for updating the objects and locks in the state
     async fn update_objects_and_locks(
         &self,
@@ -1177,10 +1155,7 @@ impl AuthorityStore {
             // of transactions that are submitted after the deletion of the shared object.
             // NB: that we do _not_ smear shared objects that were taken immutably in the
             // transaction.
-            let smeared_objects = Self::deleted_mutably_accessed_shared_objects(
-                effects,
-                transaction.shared_input_objects(),
-            );
+            let smeared_objects = effects.deleted_mutably_accessed_shared_objects();
             let shared_smears = smeared_objects.into_iter().map(move |object_id| {
                 let object_key = (epoch_id, ObjectKey(object_id, lamport_version));
                 (

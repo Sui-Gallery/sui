@@ -82,8 +82,8 @@ use sui_types::digests::ChainIdentifier;
 use sui_types::digests::TransactionEventsDigest;
 use sui_types::dynamic_field::{DynamicFieldInfo, DynamicFieldName, DynamicFieldType};
 use sui_types::effects::{
-    SignedTransactionEffects, TransactionEffects, TransactionEffectsAPI, TransactionEvents,
-    VerifiedCertifiedTransactionEffects, VerifiedSignedTransactionEffects,
+    InputSharedObject, SignedTransactionEffects, TransactionEffects, TransactionEffectsAPI,
+    TransactionEvents, VerifiedCertifiedTransactionEffects, VerifiedSignedTransactionEffects,
 };
 use sui_types::error::{ExecutionError, UserInputError};
 use sui_types::event::{Event, EventID};
@@ -1198,10 +1198,7 @@ impl AuthorityState {
         // For any previously deleted shared objects that appeared mutably in the transaction,
         // synthesize a notification for the next version of the object.
         let smeared_version = inner_temporary_store.lamport_version;
-        let deleted_accessed_objects = AuthorityStore::deleted_mutably_accessed_shared_objects(
-            effects,
-            certificate.shared_input_objects(),
-        );
+        let deleted_accessed_objects = effects.deleted_mutably_accessed_shared_objects();
         for object_id in deleted_accessed_objects.into_iter() {
             let key = InputKey::VersionedObject {
                 id: object_id,
@@ -4478,9 +4475,14 @@ impl NodeStateDump {
 
         // Record all the shared objects
         let mut shared_objects = Vec::new();
-        for (obj_ref, _kind) in effects.input_shared_objects() {
-            if let Some(w) = authority_store.get_object_by_key(&obj_ref.0, obj_ref.1)? {
-                shared_objects.push(w)
+        for kind in effects.input_shared_objects() {
+            match kind {
+                InputSharedObject::Mutate(obj_ref) | InputSharedObject::ReadOnly(obj_ref) => {
+                    if let Some(w) = authority_store.get_object_by_key(&obj_ref.0, obj_ref.1)? {
+                        shared_objects.push(w)
+                    }
+                }
+                InputSharedObject::ReadDeleted(..) | InputSharedObject::MutateDeleted(..) => (),
             }
         }
 

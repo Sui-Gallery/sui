@@ -44,7 +44,7 @@ use sui_types::{
     authenticator_state::get_authenticator_state_obj_initial_shared_version,
     base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, VersionNumber},
     committee::EpochId,
-    digests::{ChainIdentifier, CheckpointDigest, TransactionDigest},
+    digests::{ChainIdentifier, CheckpointDigest, ObjectDigest, TransactionDigest},
     error::{ExecutionError, SuiError, SuiResult},
     executable_transaction::VerifiedExecutableTransaction,
     gas::SuiGasStatus,
@@ -703,8 +703,8 @@ impl LocalExec {
         // Get the input objects
         let input_objects = self.initialize_execution_env_state(tx_info).await?;
         assert_eq!(
-            &input_objects.filter_shared_objects(),
-            &tx_info.shared_object_refs
+            &input_objects.filter_shared_objects().len(),
+            &tx_info.shared_object_refs.len()
         );
         assert_eq!(
             input_objects.transaction_dependencies(),
@@ -1403,7 +1403,19 @@ impl LocalExec {
         // Download the objects at the version right before the execution of this TX
         let modified_at_versions: Vec<(ObjectID, SequenceNumber)> = effects.modified_at_versions();
 
-        let shared_obj_refs = effects.shared_objects();
+        let shared_object_refs: Vec<ObjectRef> = effects
+            .shared_objects()
+            .iter()
+            .map(|so_ref| {
+                if so_ref.digest == ObjectDigest::OBJECT_DIGEST_DELETED {
+                    unimplemented!(
+                        "Replay of deleted shared object transactions is not supported yet"
+                    );
+                } else {
+                    so_ref.to_object_ref()
+                }
+            })
+            .collect();
         let gas_data = match tx_info.clone().transaction.unwrap().data {
             sui_json_rpc_types::SuiTransactionBlockData::V1(tx) => tx.gas_data,
         };
@@ -1424,7 +1436,7 @@ impl LocalExec {
             sender,
             modified_at_versions,
             input_objects: input_objs,
-            shared_object_refs: shared_obj_refs.iter().map(|r| r.to_object_ref()).collect(),
+            shared_object_refs,
             gas: gas_object_refs,
             gas_budget: gas_data.budget,
             gas_price: gas_data.price,
@@ -1470,7 +1482,19 @@ impl LocalExec {
         // Download the objects at the version right before the execution of this TX
         let modified_at_versions: Vec<(ObjectID, SequenceNumber)> = effects.modified_at_versions();
 
-        let shared_obj_refs = effects.shared_objects();
+        let shared_object_refs: Vec<ObjectRef> = effects
+            .shared_objects()
+            .iter()
+            .map(|so_ref| {
+                if so_ref.digest == ObjectDigest::OBJECT_DIGEST_DELETED {
+                    unimplemented!(
+                        "Replay of deleted shared object transactions is not supported yet"
+                    );
+                } else {
+                    so_ref.to_object_ref()
+                }
+            })
+            .collect();
         let gas_data = orig_tx.transaction_data().gas_data();
         let gas_object_refs: Vec<_> = gas_data.clone().payment.into_iter().collect();
 
@@ -1489,7 +1513,7 @@ impl LocalExec {
             sender,
             modified_at_versions,
             input_objects: input_objs,
-            shared_object_refs: shared_obj_refs.iter().map(|r| r.to_object_ref()).collect(),
+            shared_object_refs,
             gas: gas_object_refs,
             gas_budget: gas_data.budget,
             gas_price: gas_data.price,

@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashSet};
 use sui_protocol_config::ProtocolConfig;
 use sui_types::committee::EpochId;
 use sui_types::effects::{TransactionEffects, TransactionEvents};
-use sui_types::execution::{DynamicallyLoadedObjectMetadata, ExecutionResults};
+use sui_types::execution::{DynamicallyLoadedObjectMetadata, ExecutionResults, SharedInput};
 use sui_types::execution_status::ExecutionStatus;
 use sui_types::inner_temporary_store::InnerTemporaryStore;
 use sui_types::storage::{BackingStore, DeleteKindWithOldVersion};
@@ -182,7 +182,7 @@ impl<'backing> TemporaryStore<'backing> {
 
     pub fn to_effects(
         mut self,
-        shared_object_refs: Vec<ObjectRef>,
+        shared_object_refs: Vec<SharedInput>,
         transaction_digest: &TransactionDigest,
         transaction_dependencies: Vec<TransactionDigest>,
         gas_cost_summary: GasCostSummary,
@@ -259,6 +259,16 @@ impl<'backing> TemporaryStore<'backing> {
         }
 
         let inner = self.into_inner();
+
+        let shared_object_refs = shared_object_refs
+            .into_iter()
+            .map(|shared_input| match shared_input {
+                SharedInput::Existing(oref) => oref,
+                SharedInput::Deleted(_) => {
+                    unreachable!("Shared object deletion not supported in effects v1")
+                }
+            })
+            .collect();
 
         let effects = TransactionEffects::new_from_execution_v1(
             status,
