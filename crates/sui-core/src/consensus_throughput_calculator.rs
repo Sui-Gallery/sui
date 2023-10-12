@@ -46,6 +46,7 @@ impl From<Level> for usize {
     }
 }
 
+#[derive(Debug)]
 pub struct ThroughputProfileRanges {
     /// Holds the throughput profiles by the throughput range (upper_throughput, cool_down_threshold)
     profiles: BTreeMap<u64, ThroughputProfile>,
@@ -192,15 +193,17 @@ impl ConsensusThroughputProfiler {
             "Out of bounds provided cool down threshold offset"
         );
 
+        debug!("Profile ranges used: {:?}", profile_ranges);
+
         Self {
             throughput_profile_update_interval,
             throughput_profile_cool_down_threshold,
-            profile_ranges: Default::default(),
             last_throughput_profile: ArcSwap::from_pointee(ThroughputProfileEntry {
                 profile: profile_ranges.highest_profile(),
                 timestamp: 0,
                 throughput: 0,
             }), // assume high throughput so the node is more conservative on bootstrap
+            profile_ranges,
             metrics,
             calculator,
         }
