@@ -1532,6 +1532,7 @@ impl ProtocolConfig {
                     // Only enable effects v2 on devnet.
                     if chain != Chain::Mainnet && chain != Chain::Testnet {
                         cfg.feature_flags.enable_effects_v2 = true;
+                        cfg.feature_flags.narwhal_certificate_v2 = true;
                     }
                 }
                 // Use this template when making changes:
