@@ -63,7 +63,9 @@ use sui_indexer::{
     PgConnectionPoolConfig,
 };
 use sui_json_rpc::name_service::{Domain, NameRecord, NameServiceConfig};
-use sui_json_rpc_types::{ProtocolConfigResponse, SuiTransactionBlockEffects, EventFilter as RpcEventFilter};
+use sui_json_rpc_types::{
+    EventFilter as RpcEventFilter, ProtocolConfigResponse, SuiTransactionBlockEffects,
+};
 use sui_protocol_config::{ProtocolConfig, ProtocolVersion};
 use sui_sdk::types::{
     base_types::SuiAddress as NativeSuiAddress,
@@ -1160,7 +1162,7 @@ impl PgManager {
             protocol_version: cfg.protocol_version.as_u64(),
         })
     }
-    
+
     pub(crate) async fn fetch_events(
         &self,
         first: Option<u64>,
