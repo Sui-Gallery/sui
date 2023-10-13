@@ -471,7 +471,7 @@ fn value(context: &mut Context, e: &T::Exp) -> Option<ControlFlow> {
         E::Return(rhs) => value_report!(rhs).or_else(|| return_called(*eloc)),
         E::Abort(rhs) => value_report!(rhs).or_else(|| abort_called(*eloc)),
         E::Give(name, rhs) => value_report!(rhs).or_else(|| named_control_called(*name, *eloc)),
-        E::Continue(name) => named_contorl_called(*name, *eloc),
+        E::Continue(name) => named_control_called(*name, *eloc),
         E::Assign(_, _, _) | E::Mutate(_, _) => None, // These are unit-valued
 
         E::BinopExp(_, _, _, _) => process_binops(context, e),
