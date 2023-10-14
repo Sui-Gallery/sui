@@ -476,6 +476,7 @@ async function main() {
                 console.log(`
             MARKET_TYPE: ${r.packageId}::marketplace::Gallery`)
                 MARKET_TYPE = `${r.packageId}::marketplace::Gallery`
+                MARKET = r.packageId
             })
             .catch((e) => {
                 console.log(e)
