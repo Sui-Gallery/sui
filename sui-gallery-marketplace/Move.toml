@@ -1,0 +1,10 @@
+[package]
+name = "gallery"
+version = "0.0.1"
+
+[dependencies]
+Sui = { local = "../crates/sui-framework/packages/sui-framework" }
+
+[addresses]
+gallery =  "0x0"
+sui =  "0000000000000000000000000000000000000000000000000000000000000002"
