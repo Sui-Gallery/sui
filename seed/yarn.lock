@@ -2,19 +2,26 @@
 # yarn lockfile v1
 
 
-"@mysten/bcs@0.7.4":
-  version "0.7.4"
-  resolved "https://registry.yarnpkg.com/@mysten/bcs/-/bcs-0.7.4.tgz#1e32ec3d1fa68a0ed98323e604a741728927e421"
-  integrity sha512-6DKzM4L10Au3Og5EJRBqJZmXWZ7hS/clVjbVUH4sA0aFtS3AZo2xc+r5fUFfdJbaWZUxVaDiQ8BNiEZWkAnEOw==
+"@mysten/bcs@0.8.0":
+  version "0.8.0"
+  resolved "https://registry.yarnpkg.com/@mysten/bcs/-/bcs-0.8.0.tgz#5eb96e8329be460f32808fd0d2bc4c1da55c52f6"
+  integrity sha512-1udHN4kjJ96t7Z5svJic6Eg0ctwwq83vhPeCAVA7r2x/HGw4g9ERCWwkItKXPtnlWFcXnchXi0M78dV+OZcvOQ==
   dependencies:
     bs58 "^5.0.0"
 
-"@mysten/sui.js@^0.42.0":
-  version "0.42.0"
-  resolved "https://registry.yarnpkg.com/@mysten/sui.js/-/sui.js-0.42.0.tgz#db57ad931aa7683fe1526cb4b308425234e1eecf"
-  integrity sha512-khYpfrWTRNk7WTuDWJx/KCbleqY1B40gVRt1DttqlNkD2lvg134xZn7F/r94jxgnUETbK+hVoQvBY7F36MsfRw==
+"@mysten/kiosk@0.7.5":
+  version "0.7.5"
+  resolved "https://registry.yarnpkg.com/@mysten/kiosk/-/kiosk-0.7.5.tgz#c21d1c605daf838313beee4038e8b2128aa39e78"
+  integrity sha512-fdJ3nQi8X5Z/FOHg55o2vXxzbe7f1ic/dbxF+zo5rIEpp1PA9Eq6vkXJe0JhNcZBQfOLfG9SBV0rcENbmeCzZg==
   dependencies:
-    "@mysten/bcs" "0.7.4"
+    "@mysten/sui.js" "0.43.3"
+
+"@mysten/sui.js@0.43.3":
+  version "0.43.3"
+  resolved "https://registry.yarnpkg.com/@mysten/sui.js/-/sui.js-0.43.3.tgz#c59e971519967f07c57cb47069ec68c36f9a496d"
+  integrity sha512-phIRh3enlXq2B2RMC9zK4f1TPGPkAGBeVsv6rJcbi4K5CChd/+46X5ritX0481LncKCcySgxdzrhHLGtmmo2yg==
+  dependencies:
+    "@mysten/bcs" "0.8.0"
     "@noble/curves" "^1.1.0"
     "@noble/hashes" "^1.3.1"
     "@open-rpc/client-js" "^1.8.1"
