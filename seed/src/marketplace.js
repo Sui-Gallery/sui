@@ -382,7 +382,7 @@ async function executeMint({ toolbox }) {
 }
 
 async function run_scenario_1() {
-    console.log("Running Scenario 1")
+    console.log('Running Scenario 1')
     const toolbox = await setupSuiClient()
     await executeAddExtension({ toolbox })
     const nftId = await executeMint({ toolbox })
@@ -401,11 +401,11 @@ async function run_scenario_1() {
         type: `${MARKET}::devnet_nft::DevNetNFT`,
         price: 1000,
     })
-    console.log("------------------------------")
+    console.log('------------------------------')
 }
 
 async function run_scenario_2() {
-    console.log("Running Scenario 2")
+    console.log('Running Scenario 2')
     const toolbox = await setupSuiClient()
     await executeAddExtension({ toolbox })
     const nftId = await executeMint({ toolbox })
@@ -429,44 +429,14 @@ async function run_scenario_2() {
         type: `${MARKET}::devnet_nft::DevNetNFT`,
         price: 1000,
     })
-    console.log("------------------------------")
+    console.log('------------------------------')
 }
 
 async function repeat() {
-    // setInterval(async () => {
-
-    const toolbox = await setupSuiClient()
-    await executeAddExtension({ toolbox })
-    const nftId = await executeMint({ toolbox })
-    let kioskId = await executeList({
-        toolbox,
-        address: toolbox.address(),
-        item: nftId,
-        type: `${MARKET}::devnet_nft::DevNetNFT`,
-        price: 1000,
-    })
-    // await executeDelist({
-    //     toolbox,
-    //     address: toolbox.address(),
-    //     item: nftId,
-    //     type: `${MARKET}::devnet_nft::DevNetNFT`,
-    // })
-    // kioskId = await executeList({
-    //     toolbox,
-    //     address: toolbox.address(),
-    //     item: nftId,
-    //     type: `${MARKET}::devnet_nft::DevNetNFT`,
-    //     price: 1000,
-    // })
-    await executeBuy({
-        toolbox,
-        sellerKiosk: kioskId,
-        address: toolbox.address(),
-        item: nftId,
-        type: `${MARKET}::devnet_nft::DevNetNFT`,
-        price: 1000,
-    })
-    // }, 2000)
+    while (true) {
+        await run_scenario_1()
+        await run_scenario_2()
+    }
 }
 
 async function main() {
@@ -494,8 +464,7 @@ async function main() {
             })
     }
 
-    await run_scenario_1()
-    await run_scenario_2()
+    repeat()
 }
 
 main()
