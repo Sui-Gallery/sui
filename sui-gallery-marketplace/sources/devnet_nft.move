@@ -25,6 +25,7 @@ module gallery::devnet_nft {
         /// URL for the token
         url: Url,
         // TODO: allow custom attributes
+        image_url: Url,
     }
 
     struct MintNFTEvent has copy, drop {
@@ -34,6 +35,8 @@ module gallery::devnet_nft {
         creator: address,
         // The name of the NFT
         name: string::String,
+        // The image of the NFT
+        image_url: Url
     }
 
     fun init(otw: DEVNET_NFT, ctx: &mut TxContext) {
@@ -56,13 +59,15 @@ module gallery::devnet_nft {
             id: object::new(ctx),
             name: string::utf8(name),
             description: string::utf8(description),
-            url: url::new_unsafe_from_bytes(url)
+            url: url::new_unsafe_from_bytes(url),
+            image_url: url::new_unsafe_from_bytes(b"https://picsum.photos/seed/picsum/300/300")
         };
         let sender = tx_context::sender(ctx);
         event::emit(MintNFTEvent {
             object_id: object::uid_to_inner(&nft.id),
             creator: sender,
             name: nft.name,
+            image_url: url::new_unsafe_from_bytes(b"https://picsum.photos/seed/picsum/300/300")
         });
         transfer::public_transfer(nft, sender);
     }
@@ -77,7 +82,7 @@ module gallery::devnet_nft {
 
     /// Permanently delete `nft`
     public entry fun burn(nft: DevNetNFT) {
-        let DevNetNFT { id, name: _, description: _, url: _ } = nft;
+        let DevNetNFT { id, name: _, description: _, url: _, image_url: _ } = nft;
         object::delete(id)
     }
 
