@@ -28,10 +28,10 @@ const DEFAULT_FAUCET_URL = getFaucetHost('localnet');
 const DEFAULT_FULLNODE_URL = getFullnodeUrl('localnet');
 const SUI_BIN = 'cargo run --bin sui';
 
-let MARKET = '0x587a54b453bc100f251095d3fb8869c10fa8ac5cd5918ede0fc5c1e73ad1280e';
+let MARKET = '0xa8d9d556b2c68c83c3045bbbfbdff68c329706e4967c501aef75e51db1584a6c';
 let MARKET_TYPE =
-	'0x587a54b453bc100f251095d3fb8869c10fa8ac5cd5918ede0fc5c1e73ad1280e::marketplace::Gallery';
-let MARKETPLACE_ADAPTER = '0x7aed4ce082dcb14fec591c8e53b5d19fdeded2fe90f67c07f187c8b3fd8a8f9';
+	'0xa8d9d556b2c68c83c3045bbbfbdff68c329706e4967c501aef75e51db1584a6c::marketplace::Gallery';
+let MARKETPLACE_ADAPTER = '0xa0c41d10e2fcfd3992aa82ff18d96c2922b5fd4fa9d7caf1a3a6ab907de2463c';
 
 class TestToolbox {
 	keypair;
@@ -391,10 +391,14 @@ async function run_scenario_1() {
 		type: `${MARKET}::devnet_nft::DevNetNFT`,
 		price: price,
 	});
+
+	const toolbox2 = await setupSuiClient();
+	await executeAddExtension({ toolbox: toolbox2 });
+
 	await executeBuy({
-		toolbox,
+		toolbox: toolbox2,
 		sellerKiosk: kioskId,
-		address: toolbox.address(),
+		address: toolbox2.address(),
 		item: nftId,
 		type: `${MARKET}::devnet_nft::DevNetNFT`,
 		price: price,
@@ -434,7 +438,7 @@ async function run_scenario_2() {
 async function repeat() {
 	while (true) {
 		await run_scenario_1();
-		await run_scenario_2();
+		// await run_scenario_2();
 	}
 }
 

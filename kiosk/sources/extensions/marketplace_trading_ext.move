@@ -51,6 +51,7 @@ module kiosk::marketplace_trading_ext {
     /// An item has been purchased from a Marketplace.
     struct ItemPurchased<phantom T, phantom Market> has copy, drop {
         kiosk_id: ID,
+        from: address,
         item_id: ID,
         price: u64,
         kiosk_owner: Option<address>
@@ -127,6 +128,7 @@ module kiosk::marketplace_trading_ext {
 
         event::emit(ItemPurchased<T, Market> {
             kiosk_owner: personal_kiosk::try_owner(self),
+            from: kiosk::owner(self),
             kiosk_id: object::id(self),
             item_id,
             price
