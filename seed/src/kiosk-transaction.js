@@ -1,214 +1,219 @@
-const { KioskTransaction, objArg, getNormalizedRuleType } = require('@mysten/kiosk')
+const { KioskTransaction, objArg, getNormalizedRuleType } = require('@mysten/kiosk');
 
 class ExtendedKioskTransactions extends KioskTransaction {
-    constructor({ transactionBlock, kioskClient, cap }, { adapter, market_type, market }) {
-        super({ transactionBlock, kioskClient, cap })
-        this.MARKETPLACE_ADAPTER = adapter
-        this.MARKET_TYPE = market_type
-        this.MARKET = market
-    }
+	constructor({ transactionBlock, kioskClient, cap }, { adapter, market_type, market }) {
+		super({ transactionBlock, kioskClient, cap });
+		this.MARKETPLACE_ADAPTER = adapter;
+		this.MARKET_TYPE = market_type;
+		this.MARKET = market;
+	}
 
-    listOnMarket({ itemType, item, price }) {
-        this.validateKioskIsSet()
-        const txb = this.transactionBlock
-        txb.moveCall({
-            target: `${this.MARKETPLACE_ADAPTER}::marketplace_trading_ext::list`,
-            typeArguments: [itemType, this.MARKET_TYPE],
-            arguments: [objArg(txb, this.kiosk), objArg(txb, this.kioskCap), txb.pure.address(item), txb.pure.u64(price)],
+	listOnMarket({ itemType, item, price }) {
+		this.validateKioskIsSet();
+		const txb = this.transactionBlock;
+		txb.moveCall({
+			target: `${this.MARKETPLACE_ADAPTER}::marketplace_trading_ext::list`,
+			typeArguments: [itemType, this.MARKET_TYPE],
+			arguments: [
+				objArg(txb, this.kiosk),
+				objArg(txb, this.kioskCap),
+				txb.pure.address(item),
+				txb.pure.u64(price),
+			],
+		});
+		return this;
+	}
 
-        })
-        return this
-    }
+	delistOnMarket({ itemType, item }) {
+		this.validateKioskIsSet();
 
-    delistOnMarket({ itemType, item }) {
-        this.validateKioskIsSet()
+		const txb = this.transactionBlock;
 
-        const txb = this.transactionBlock
+		txb.moveCall({
+			target: `${this.MARKETPLACE_ADAPTER}::marketplace_trading_ext::delist`,
+			typeArguments: [itemType, this.MARKET_TYPE],
+			arguments: [objArg(txb, this.kiosk), objArg(txb, this.kioskCap), txb.pure.address(item)],
+		});
+		return this;
+	}
 
-        txb.moveCall({
-            target: `${this.MARKETPLACE_ADAPTER}::marketplace_trading_ext::delist`,
-            typeArguments: [itemType, this.MARKET_TYPE],
-            arguments: [objArg(txb, this.kiosk), objArg(txb, this.kioskCap), txb.pure.address(item)],
+	purchaseOnMarket({ itemType, itemId, price, sellerKiosk }) {
+		this.validateKioskIsSet();
 
-        })
-        return this
-    }
+		const txb = this.transactionBlock;
 
-    purchaseOnMarket({ itemType, itemId, price, sellerKiosk }) {
-        this.validateKioskIsSet()
+		const coin = this.transactionBlock.splitCoins(txb.gas, [txb.pure.u64(price)]);
 
-        const txb = this.transactionBlock
+		const [item, collectionTransferRequest, marketTransferRequest] = txb.moveCall({
+			target: `${this.MARKETPLACE_ADAPTER}::marketplace_trading_ext::purchase`,
+			typeArguments: [itemType, this.MARKET_TYPE],
+			arguments: [objArg(txb, sellerKiosk), txb.pure(itemId), coin],
+		});
 
-        const coin = this.transactionBlock.splitCoins(txb.gas, [
-            txb.pure.u64(price),
-        ])
+		return [item, collectionTransferRequest, marketTransferRequest];
+	}
 
-        const [
-            item,
-            collectionTransferRequest,
-            marketTransferRequest,
-        ] = txb.moveCall({
-            target: `${this.MARKETPLACE_ADAPTER}::marketplace_trading_ext::purchase`,
-            typeArguments: [itemType, this.MARKET_TYPE],
-            arguments: [objArg(txb, sellerKiosk), txb.pure(itemId), coin],
-        })
+	confirmRequest({ tx, itemType, policy, request }) {
+		tx.moveCall({
+			target: `0x2::transfer_policy::confirm_request`,
+			typeArguments: [itemType],
+			arguments: [objArg(tx, policy), request],
+		});
+	}
 
-        return [item, collectionTransferRequest, marketTransferRequest]
-    }
+	checkPolicyRules({
+		itemType,
+		itemId,
+		price,
+		sellerKiosk,
+		transferRequest,
+		purchasedItem,
+		policy,
+		extraArgs,
+	}) {
+		let canTransferOutsideKiosk = true;
 
-    confirmRequest({ tx, itemType, policy, request }) {
-        tx.moveCall({
-            target: `0x2::transfer_policy::confirm_request`,
-            typeArguments: [itemType],
-            arguments: [objArg(tx, policy), request],
-        })
-    }
+		for (const rule of policy.rules) {
+			const ruleDefinition = this.kioskClient.rules.find(
+				(x) => getNormalizedRuleType(x.rule) === getNormalizedRuleType(rule),
+			);
+			if (!ruleDefinition) {
+				throw new Error(`No resolver for the following rule: ${rule}.`);
+			}
 
-    checkPolicyRules({ itemType, itemId, price, sellerKiosk, transferRequest, purchasedItem, policy, extraArgs }) {
-        let canTransferOutsideKiosk = true
+			if (ruleDefinition.hasLockingRule) {
+				canTransferOutsideKiosk = false;
+			}
 
-        for (const rule of policy.rules) {
-            const ruleDefinition = this.kioskClient.rules.find(
-                (x) => getNormalizedRuleType(x.rule) === getNormalizedRuleType(rule),
-            )
-            if (!ruleDefinition) {
-                throw new Error(`No resolver for the following rule: ${rule}.`)
-            }
+			ruleDefinition.resolveRuleFunction({
+				packageId: ruleDefinition.packageId,
+				transactionBlock: this.transactionBlock,
+				itemType,
+				itemId,
+				price: price.toString(),
+				sellerKiosk,
+				policyId: policy.id,
+				transferRequest,
+				purchasedItem,
+				kiosk: this.kiosk,
+				kioskCap: this.kioskCap,
+				extraArgs: extraArgs || {},
+			});
+		}
 
-            if (ruleDefinition.hasLockingRule) {
-                canTransferOutsideKiosk = false
-            }
+		this.confirmRequest({
+			tx: this.transactionBlock,
+			itemType: itemType,
+			policy: policy.id,
+			request: transferRequest,
+		});
 
-            ruleDefinition.resolveRuleFunction({
-                packageId: ruleDefinition.packageId,
-                transactionBlock: this.transactionBlock,
-                itemType,
-                itemId,
-                price: price.toString(),
-                sellerKiosk,
-                policyId: policy.id,
-                transferRequest,
-                purchasedItem,
-                kiosk: this.kiosk,
-                kioskCap: this.kioskCap,
-                extraArgs: extraArgs || {},
-            })
-        }
+		return canTransferOutsideKiosk;
+	}
 
-        this.confirmRequest({
-            tx: this.transactionBlock,
-            itemType: itemType,
-            policy: policy.id,
-            request: transferRequest,
-        })
+	async purchaseAndResolveOnMarket({ itemType, itemId, price, sellerKiosk }) {
+		const [purchasedItem, collectionTransferRequest, marketTransferRequest] = this.purchaseOnMarket(
+			{
+				itemType,
+				itemId,
+				price,
+				sellerKiosk,
+			},
+		);
 
-        return canTransferOutsideKiosk
-    }
+		const collectionPolicy = await this.getPolicy({ type: itemType });
+		const marketPolicy = await this.getPolicy({ type: this.MARKET_TYPE });
 
-    async purchaseAndResolveOnMarket({ itemType, itemId, price, sellerKiosk }) {
+		let canTransferOutsideKiosk = this.checkPolicyRules({
+			itemType,
+			itemId,
+			price,
+			sellerKiosk,
+			transferRequest: collectionTransferRequest,
+			purchasedItem,
+			policy: collectionPolicy,
+		});
 
-        const [purchasedItem, collectionTransferRequest, marketTransferRequest] = this.purchaseOnMarket({
-            itemType,
-            itemId,
-            price,
-            sellerKiosk,
-        })
+		let canTransferOutsideKiosk2 = this.checkPolicyRules({
+			itemType: this.MARKET_TYPE,
+			itemId: this.MARKET,
+			price,
+			sellerKiosk,
+			transferRequest: marketTransferRequest,
+			purchasedItem,
+			policy: marketPolicy,
+		});
 
-        const collectionPolicy = await this.getPolicy({ type: itemType })
-        const marketPolicy = await this.getPolicy({ type: this.MARKET_TYPE })
+		if (canTransferOutsideKiosk && canTransferOutsideKiosk2) {
+			this.place({
+				itemType,
+				item: purchasedItem,
+			});
+		}
 
-        let canTransferOutsideKiosk = this.checkPolicyRules({
-            itemType,
-            itemId,
-            price,
-            sellerKiosk,
-            transferRequest: collectionTransferRequest,
-            purchasedItem,
-            policy: collectionPolicy,
-        })
+		return this;
+	}
 
-        let canTransferOutsideKiosk2 = this.checkPolicyRules({
-            itemType: this.MARKET_TYPE,
-            itemId: this.MARKET,
-            price,
-            sellerKiosk,
-            transferRequest: marketTransferRequest,
-            purchasedItem,
-            policy: marketPolicy,
-        })
+	addTradingExtension() {
+		this.validateKioskIsSet();
+		const txb = this.transactionBlock;
+		txb.moveCall({
+			target: `${this.MARKETPLACE_ADAPTER}::marketplace_trading_ext::add`,
+			arguments: [objArg(txb, this.kiosk), objArg(txb, this.kioskCap)],
+		});
+		return this;
+	}
 
-        if (canTransferOutsideKiosk && canTransferOutsideKiosk2) {
-            this.place(
-                {
-                    itemType, item:
-                    purchasedItem,
-                },
-            )
-        }
+	addBiddingExtension() {
+		this.validateKioskIsSet();
+		const txb = this.transactionBlock;
+		txb.moveCall({
+			target: `${this.MARKETPLACE_ADAPTER}::collection_bidding_ext::add`,
+			arguments: [objArg(txb, this.kiosk), objArg(txb, this.kioskCap)],
+		});
+		return this;
+	}
 
-        return this
-    }
+	placeBidOnMarket({ type, price }) {
+		this.validateKioskIsSet();
+		const txb = this.transactionBlock;
 
-    addTradingExtension() {
-        this.validateKioskIsSet()
-        const txb = this.transactionBlock
-        txb.moveCall({
-            target: `${this.MARKETPLACE_ADAPTER}::marketplace_trading_ext::add`,
-            arguments: [objArg(txb, this.kiosk), objArg(txb, this.kioskCap)],
-        })
-        return this
-    }
+		const coin = txb.splitCoins(txb.gas, [txb.pure.u64(price)]);
 
-    addBiddingExtension() {
-        this.validateKioskIsSet()
-        const txb = this.transactionBlock
-        txb.moveCall({
-            target: `${this.MARKETPLACE_ADAPTER}::collection_bidding_ext::add`,
-            arguments: [objArg(txb, this.kiosk), objArg(txb, this.kioskCap)],
-        })
-        return this
-    }
+		const coins = txb.makeMoveVec({
+			objects: [coin],
+		});
 
-    placeBidOnMarket({ type, price }) {
-        this.validateKioskIsSet()
-        const txb = this.transactionBlock
+		txb.moveCall({
+			target: `${this.MARKETPLACE_ADAPTER}::collection_bidding_ext::place_bids`,
+			typeArguments: [type, this.MARKET_TYPE],
+			arguments: [objArg(txb, this.kiosk), objArg(txb, this.kioskCap), coins],
+		});
 
-        const coin = txb.splitCoins(txb.gas, [
-            txb.pure.u64(price),
-        ])
+		return this;
+	}
 
-        const coins = txb.makeMoveVec({
-            objects: [coin],
-        })
+	validateKioskIsSet() {
+		if (!this.kiosk || !this.kioskCap) {
+			throw new Error(
+				'You need to initialize the client by either supplying an existing owner cap or by creating a new by calling `.create()`',
+			);
+		}
+	}
 
-        txb.moveCall({
-            target: `${this.MARKETPLACE_ADAPTER}::collection_bidding_ext::place_bids`,
-            typeArguments: [type, this.MARKET_TYPE],
-            arguments: [objArg(txb, this.kiosk), objArg(txb, this.kioskCap), coins],
-        })
+	async getPolicy({ type }) {
+		const policies = await this.kioskClient.getTransferPolicies({ type });
 
-        return this
-    }
+		if (policies.length === 0) {
+			throw new Error(
+				`The type ${type} doesn't have a Transfer Policy so it can't be traded through kiosk.`,
+			);
+		}
 
-    validateKioskIsSet() {
-        if (!this.kiosk || !this.kioskCap) {
-            throw new Error('You need to initialize the client by either supplying an existing owner cap or by creating a new by calling `.create()`')
-        }
-    }
-
-    async getPolicy({ type }) {
-        const policies = await this.kioskClient.getTransferPolicies({ type })
-
-        if (policies.length === 0) {
-            throw new Error(
-                `The type ${type} doesn't have a Transfer Policy so it can't be traded through kiosk.`,
-            )
-        }
-
-        return policies[0]
-    }
+		return policies[0];
+	}
 }
 
 module.exports = {
-    ExtendedKioskTransactions,
-}
+	ExtendedKioskTransactions,
+};

@@ -28,10 +28,10 @@ const DEFAULT_FAUCET_URL = getFaucetHost('localnet');
 const DEFAULT_FULLNODE_URL = getFullnodeUrl('localnet');
 const SUI_BIN = 'cargo run --bin sui';
 
-let MARKET = '0xa8d9d556b2c68c83c3045bbbfbdff68c329706e4967c501aef75e51db1584a6c';
+let MARKET = '0x461930413ec4421356fd106471a255d289755f4850117b22ced5772cc0977a5b';
 let MARKET_TYPE =
-	'0xa8d9d556b2c68c83c3045bbbfbdff68c329706e4967c501aef75e51db1584a6c::marketplace::Gallery';
-let MARKETPLACE_ADAPTER = '0xa0c41d10e2fcfd3992aa82ff18d96c2922b5fd4fa9d7caf1a3a6ab907de2463c';
+	'0x461930413ec4421356fd106471a255d289755f4850117b22ced5772cc0977a5b::marketplace::Gallery';
+let MARKETPLACE_ADAPTER = '0xc86395d543b9ebd2562119ff03deaf477f083b11f9d441ddac16ca59072f7188';
 
 class TestToolbox {
 	keypair;
@@ -223,6 +223,15 @@ async function listOnMarket({ address, item, type, price }) {
 	});
 }
 
+async function bidOnMarket({ address, type, price }) {
+	return await withKioskTransaction({ address }, async (txb, kioskTx, cap) => {
+		kioskTx.placeBidOnMarket({
+			type: type,
+			price,
+		});
+	});
+}
+
 async function addTradingExtension(address) {
 	return await withKioskTransaction({ address }, async (txb, kioskTx, cap) => {
 		kioskTx.addTradingExtension({ address });
@@ -317,15 +326,6 @@ async function executeDelist({ address, item, type, price, toolbox }) {
 }
 
 async function executeBuy({ sellerKiosk, address, item, type, price, toolbox }) {
-	// const owner = client.getObject({
-	//     id: item,
-	//     options: {
-	//         showOwner: true,
-	//     },
-	// })
-	//
-	// console.log(owner)
-	// return
 	const txb = await purchaseAndResolveOnMarket({ address, sellerKiosk, item, type, price });
 	await executeTransactionBlock(toolbox, txb)
 		.then((r) => {
@@ -341,7 +341,28 @@ async function executeAddExtension({ toolbox }) {
 
 	await executeTransactionBlock(toolbox, txb)
 		.then((r) => {
-			console.log(`Add Extension is ${r.effects.status.status}`);
+			console.log(`Add Trading Extension is ${r.effects.status.status}`);
+		})
+		.catch((e) => {
+			console.log(e);
+		});
+
+	const txb2 = await addBiddingExtension(toolbox.address());
+
+	await executeTransactionBlock(toolbox, txb2)
+		.then((r) => {
+			console.log(`Add Bidding Extension is ${r.effects.status.status}`);
+		})
+		.catch((e) => {
+			console.log(e);
+		});
+}
+
+async function executePlaceBid({ toolbox, address, type, price }) {
+	const txb = await bidOnMarket({ address, type, price });
+	await executeTransactionBlock(toolbox, txb)
+		.then((r) => {
+			console.log(`Place bid is ${r.effects.status.status}`);
 		})
 		.catch((e) => {
 			console.log(e);
@@ -392,6 +413,16 @@ async function run_scenario_1() {
 		price: price,
 	});
 
+	const bidToolbox = await setupSuiClient();
+	await executeAddExtension({ toolbox: bidToolbox });
+
+	await executePlaceBid({
+		toolbox: bidToolbox,
+		address: bidToolbox.address(),
+		type: `${MARKET}::devnet_nft::DevNetNFT`,
+		price: Math.max(parseInt(1e10 * Math.random()), 1e8),
+	});
+
 	const toolbox2 = await setupSuiClient();
 	await executeAddExtension({ toolbox: toolbox2 });
 
@@ -436,10 +467,10 @@ async function run_scenario_2() {
 }
 
 async function repeat() {
-	while (true) {
-		await run_scenario_1();
-		// await run_scenario_2();
-	}
+	// while (true) {
+	await run_scenario_1();
+	// await run_scenario_2();
+	// }
 }
 
 async function main() {
