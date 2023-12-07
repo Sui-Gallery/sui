@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["BridgeCommittee","BridgeCommitteeValiditySignInfo","CommitteeMember"],"type":["BridgeCommitteePublicKey","BridgeCommitteeSignature"]};
