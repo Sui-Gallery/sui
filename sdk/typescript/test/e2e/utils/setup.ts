@@ -1,17 +1,17 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect } from 'vitest';
 import { execSync } from 'child_process';
 import tmp from 'tmp';
-
-import { Coin } from '../../../src';
-import { TransactionBlock, UpgradePolicy } from '../../../src/builder';
-import { Ed25519Keypair } from '../../../src/keypairs/ed25519';
 import { retry } from 'ts-retry-promise';
-import { FaucetRateLimitError, getFaucetHost, requestSuiFromFaucetV0 } from '../../../src/faucet';
-import { SuiClient, SuiObjectChangePublished, getFullnodeUrl } from '../../../src/client';
+import { expect } from 'vitest';
+
+import { TransactionBlock, UpgradePolicy } from '../../../src/builder';
+import { getFullnodeUrl, SuiClient, SuiObjectChangePublished } from '../../../src/client';
 import { Keypair } from '../../../src/cryptography';
+import { FaucetRateLimitError, getFaucetHost, requestSuiFromFaucetV0 } from '../../../src/faucet';
+import { Ed25519Keypair } from '../../../src/keypairs/ed25519';
+import { SUI_TYPE_ARG } from '../../../src/utils';
 
 const DEFAULT_FAUCET_URL = import.meta.env.VITE_FAUCET_URL ?? getFaucetHost('localnet');
 const DEFAULT_FULLNODE_URL = import.meta.env.VITE_FULLNODE_URL ?? getFullnodeUrl('localnet');
@@ -37,17 +37,11 @@ export class TestToolbox {
 		return this.keypair.getPublicKey().toSuiAddress();
 	}
 
-	// TODO(chris): replace this with provider.getCoins instead
 	async getGasObjectsOwnedByAddress() {
-		const objects = await this.client.getOwnedObjects({
+		return await this.client.getCoins({
 			owner: this.address(),
-			options: {
-				showType: true,
-				showContent: true,
-				showOwner: true,
-			},
+			coinType: SUI_TYPE_ARG,
 		});
-		return objects.data.filter((obj) => Coin.isSUI(obj));
 	}
 
 	public async getActiveValidators() {
@@ -64,6 +58,10 @@ export function getClient(): SuiClient {
 export async function setup() {
 	const keypair = Ed25519Keypair.generate();
 	const address = keypair.getPublicKey().toSuiAddress();
+	return setupWithFundedAddress(keypair, address);
+}
+
+export async function setupWithFundedAddress(keypair: Ed25519Keypair, address: string) {
 	const client = getClient();
 	await retry(() => requestSuiFromFaucetV0({ host: DEFAULT_FAUCET_URL, recipient: address }), {
 		backoff: 'EXPONENTIAL',
@@ -212,7 +210,7 @@ export async function paySui(
 		).data[0].coinObjectId;
 
 	recipients.forEach((recipient, i) => {
-		const coin = tx.splitCoins(tx.object(coinId!), [tx.pure(amounts![i])]);
+		const coin = tx.splitCoins(coinId!, [tx.pure(amounts![i])]);
 		tx.transferObjects([coin], tx.pure(recipient));
 	});
 

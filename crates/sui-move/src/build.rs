@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
-use move_cli::base::{self, build};
+use move_cli::base;
 use move_package::BuildConfig as MoveBuildConfig;
 use serde_json::json;
 use std::{fs, path::PathBuf};
@@ -12,9 +12,8 @@ const LAYOUTS_DIR: &str = "layouts";
 const STRUCT_LAYOUTS_FILENAME: &str = "struct_layouts.yaml";
 
 #[derive(Parser)]
+#[group(id = "sui-move-build")]
 pub struct Build {
-    #[clap(flatten)]
-    pub build: build::Build,
     /// Include the contents of packages in dependencies that haven't been published (only relevant
     /// when dumping bytecode as base64)
     #[clap(long, global = true)]
@@ -29,9 +28,9 @@ pub struct Build {
     /// and events.
     #[clap(long, global = true)]
     pub generate_struct_layouts: bool,
-    /// If `true`, enable linters
+    /// If `true`, disable linters
     #[clap(long, global = true)]
-    pub lint: bool,
+    pub no_lint: bool,
 }
 
 impl Build {
@@ -48,7 +47,7 @@ impl Build {
             self.with_unpublished_dependencies,
             self.dump_bytecode_as_base64,
             self.generate_struct_layouts,
-            self.lint,
+            !self.no_lint,
         )
     }
 

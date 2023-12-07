@@ -31,6 +31,7 @@ const VERSION: &str = const_str::concat!(env!("CARGO_PKG_VERSION"), "-", GIT_REV
     rename_all = "kebab-case",
     author,
     version = VERSION,
+    propagate_version = true,
 )]
 struct Args {
     #[clap(subcommand)]
@@ -42,15 +43,15 @@ async fn main() {
     #[cfg(windows)]
     colored::control::set_virtual_terminal(true).unwrap();
 
-    let bin_name = env!("CARGO_BIN_NAME");
     let args = Args::parse();
     let _guard = match args.command {
-        SuiCommand::Console { .. } | SuiCommand::Client { .. } => {
-            telemetry_subscribers::TelemetryConfig::new()
-                .with_log_file(&format!("{bin_name}.log"))
-                .with_env()
-                .init()
-        }
+        SuiCommand::Console { .. }
+        | SuiCommand::Client { .. }
+        | SuiCommand::KeyTool { .. }
+        | SuiCommand::Move { .. } => telemetry_subscribers::TelemetryConfig::new()
+            .with_log_level("error")
+            .with_env()
+            .init(),
         _ => telemetry_subscribers::TelemetryConfig::new()
             .with_env()
             .init(),

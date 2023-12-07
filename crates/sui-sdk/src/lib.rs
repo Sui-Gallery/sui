@@ -48,15 +48,15 @@
 //!         .build("http://127.0.0.1:9000") // provide the Sui network URL
 //!         .await?;
 //!     println!("Sui local network version: {:?}", sui.api_version());
-//!     
+//!
 //!     // local Sui network, same result as above except using the dedicated function
 //!     let sui_local = SuiClientBuilder::default().build_localnet().await?;
 //!     println!("Sui local network version: {:?}", sui_local.api_version());
-//!     
+//!
 //!     // Sui devnet running at `https://fullnode.devnet.io:443`
 //!     let sui_devnet = SuiClientBuilder::default().build_devnet().await?;
 //!     println!("Sui devnet version: {:?}", sui_devnet.api_version());
-//!     
+//!
 //!     // Sui testnet running at `https://testnet.devnet.io:443`
 //!     let sui_testnet = SuiClientBuilder::default().build_testnet().await?;
 //!     println!("Sui testnet version: {:?}", sui_testnet.api_version());
@@ -101,8 +101,10 @@ use crate::error::{Error, SuiRpcResult};
 
 pub mod apis;
 pub mod error;
+pub mod json_rpc_error;
 pub mod sui_client_config;
 pub mod wallet_context;
+
 pub const SUI_COIN_TYPE: &str = "0x2::sui::SUI";
 pub const SUI_LOCAL_NETWORK_URL: &str = "http://127.0.0.1:9000";
 pub const SUI_LOCAL_NETWORK_GAS_URL: &str = "http://127.0.0.1:5003/gas";
@@ -114,6 +116,9 @@ pub const SUI_TESTNET_URL: &str = "https://fullnode.testnet.sui.io:443";
 /// By default the `maximum concurrent requests` is set to 256 and
 /// the `request timeout` is set to 60 seconds. These can be adjusted using the
 /// `max_concurrent_requests` function, and the `request_timeout` function.
+/// If you use the WebSocket, consider setting the `ws_ping_interval` field to a
+/// value of your choice to prevent the inactive WS subscription being
+/// disconnected due to proxy timeout.
 ///
 /// # Examples
 ///
@@ -133,6 +138,7 @@ pub struct SuiClientBuilder {
     request_timeout: Duration,
     max_concurrent_requests: usize,
     ws_url: Option<String>,
+    ws_ping_interval: Option<Duration>,
 }
 
 impl Default for SuiClientBuilder {
@@ -141,6 +147,7 @@ impl Default for SuiClientBuilder {
             request_timeout: Duration::from_secs(60),
             max_concurrent_requests: 256,
             ws_url: None,
+            ws_ping_interval: None,
         }
     }
 }
@@ -161,6 +168,12 @@ impl SuiClientBuilder {
     /// Set the WebSocket URL for the Sui network
     pub fn ws_url(mut self, url: impl AsRef<str>) -> Self {
         self.ws_url = Some(url.as_ref().to_string());
+        self
+    }
+
+    /// Set the WebSocket ping interval
+    pub fn ws_ping_interval(mut self, duration: Duration) -> Self {
+        self.ws_ping_interval = Some(duration);
         self
     }
 
@@ -196,15 +209,17 @@ impl SuiClientBuilder {
         headers.insert(CLIENT_SDK_TYPE_HEADER, HeaderValue::from_static("rust"));
 
         let ws = if let Some(url) = self.ws_url {
-            Some(
-                WsClientBuilder::default()
-                    .max_request_body_size(2 << 30)
-                    .max_concurrent_requests(self.max_concurrent_requests)
-                    .set_headers(headers.clone())
-                    .request_timeout(self.request_timeout)
-                    .build(url)
-                    .await?,
-            )
+            let mut builder = WsClientBuilder::default()
+                .max_request_body_size(2 << 30)
+                .max_concurrent_requests(self.max_concurrent_requests)
+                .set_headers(headers.clone())
+                .request_timeout(self.request_timeout);
+
+            if let Some(duration) = self.ws_ping_interval {
+                builder = builder.ping_interval(duration)
+            }
+
+            Some(builder.build(url).await?)
         } else {
             None
         };
@@ -386,11 +401,10 @@ impl SuiClientBuilder {
 ///        .await?;
 ///
 ///     println!("{:?}", owned_objects);
-///    
+///
 ///     Ok(())
 /// }
 /// ```
-
 #[derive(Clone)]
 pub struct SuiClient {
     api: Arc<RpcClient>,

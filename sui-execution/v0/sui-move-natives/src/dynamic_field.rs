@@ -9,9 +9,10 @@ use crate::{
 use move_binary_format::errors::{PartialVMError, PartialVMResult};
 use move_core_types::{
     account_address::AccountAddress,
+    annotated_value as A,
     gas_algebra::InternalGas,
     language_storage::{StructTag, TypeTag},
-    value::MoveTypeLayout,
+    runtime_value as R,
     vm_status::StatusCode,
 };
 use move_vm_runtime::native_charge_gas_early_exit;
@@ -131,16 +132,10 @@ pub fn hash_type_and_key(
         _ => return Ok(NativeResult::err(cost, E_BCS_SERIALIZATION_FAILURE)),
     };
     let Some(k_bytes) = k.simple_serialize(&k_layout) else {
-        return Ok(NativeResult::err(
-            cost,
-            E_BCS_SERIALIZATION_FAILURE,
-        ))
+        return Ok(NativeResult::err(cost, E_BCS_SERIALIZATION_FAILURE));
     };
     let Ok(id) = derive_dynamic_field_id(parent, &k_tag, &k_bytes) else {
-        return Ok(NativeResult::err(
-            cost,
-            E_BCS_SERIALIZATION_FAILURE,
-        ));
+        return Ok(NativeResult::err(cost, E_BCS_SERIALIZATION_FAILURE));
     };
 
     Ok(NativeResult::ok(cost, smallvec![Value::address(id.into())]))
@@ -501,7 +496,7 @@ pub fn has_child_object_with_ty(
 fn get_tag_and_layouts(
     context: &NativeContext,
     ty: &Type,
-) -> PartialVMResult<Option<(StructTag, MoveTypeLayout, MoveTypeLayout)>> {
+) -> PartialVMResult<Option<(StructTag, R::MoveTypeLayout, A::MoveTypeLayout)>> {
     let tag = match context.type_to_type_tag(ty)? {
         TypeTag::Struct(s) => s,
         _ => {
@@ -512,10 +507,10 @@ fn get_tag_and_layouts(
         }
     };
     let Some(layout) = context.type_to_type_layout(ty)? else {
-        return Ok(None)
+        return Ok(None);
     };
     let Some(annotated_layout) = context.type_to_fully_annotated_layout(ty)? else {
-        return Ok(None)
+        return Ok(None);
     };
     Ok(Some((*tag, layout, annotated_layout)))
 }

@@ -142,7 +142,7 @@ impl StressTestRunner {
                 .programmable(pt)
                 .build(),
         );
-        let (effects, _, _) = self
+        let (effects, _) = self
             .test_cluster
             .execute_transaction_return_raw_effects(transaction)
             .await
@@ -154,7 +154,6 @@ impl StressTestRunner {
 
     // Useful for debugging and the like
     pub fn display_effects(&self, effects: &TransactionEffects) {
-        let TransactionEffects::V1(effects) = effects;
         println!("CREATED:");
         let state = self.state();
 
@@ -162,7 +161,7 @@ impl StressTestRunner {
         let mut layout_resolver = epoch_store
             .executor()
             .type_layout_resolver(Box::new(state.database.as_ref()));
-        for (obj_ref, _) in &effects.created {
+        for (obj_ref, _) in effects.created() {
             let object_opt = state
                 .database
                 .get_object_by_key(&obj_ref.0, obj_ref.1)
@@ -175,7 +174,7 @@ impl StressTestRunner {
         }
 
         println!("MUTATED:");
-        for (obj_ref, _) in &effects.mutated {
+        for (obj_ref, _) in effects.mutated() {
             let object = state
                 .database
                 .get_object_by_key(&obj_ref.0, obj_ref.1)
@@ -188,10 +187,11 @@ impl StressTestRunner {
         }
 
         println!("SHARED:");
-        for (obj_id, version, _) in &effects.shared_objects {
+        for kind in effects.input_shared_objects() {
+            let (obj_id, version) = kind.id_and_version();
             let object = state
                 .database
-                .get_object_by_key(obj_id, *version)
+                .get_object_by_key(&obj_id, version)
                 .unwrap()
                 .unwrap();
             let struct_tag = object.struct_tag().unwrap();
@@ -224,8 +224,7 @@ impl StressTestRunner {
         effects: &TransactionEffects,
         name: &str,
     ) -> Option<Object> {
-        let TransactionEffects::V1(effects) = effects;
-        self.get_from_effects(&effects.created, name).await
+        self.get_from_effects(&effects.created(), name).await
     }
 
     #[allow(dead_code)]
@@ -234,8 +233,7 @@ impl StressTestRunner {
         effects: &TransactionEffects,
         name: &str,
     ) -> Option<Object> {
-        let TransactionEffects::V1(effects) = effects;
-        self.get_from_effects(&effects.mutated, name).await
+        self.get_from_effects(&effects.mutated(), name).await
     }
 
     fn split_off(builder: &mut ProgrammableTransactionBuilder, amount: u64) -> Argument {

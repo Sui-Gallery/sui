@@ -12,24 +12,28 @@ use move_unit_test::{extensions::set_extension_hook, UnitTestingConfig};
 use move_vm_runtime::native_extensions::NativeContextExtensions;
 use once_cell::sync::Lazy;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
-use sui_core::authority::TemporaryStore;
 use sui_move_natives::{object_runtime::ObjectRuntime, NativesCostTable};
 use sui_protocol_config::ProtocolConfig;
 use sui_types::{
-    digests::TransactionDigest, gas_model::tables::initial_cost_schedule_for_unit_tests,
-    in_memory_storage::InMemoryStorage, metrics::LimitsMetrics, transaction::InputObjects,
+    base_types::{ObjectID, SequenceNumber},
+    error::SuiResult,
+    gas_model::tables::initial_cost_schedule_for_unit_tests,
+    metrics::LimitsMetrics,
+    object::Object,
+    storage::ChildObjectResolver,
 };
 
 // Move unit tests will halt after executing this many steps. This is a protection to avoid divergence
 const MAX_UNIT_TEST_INSTRUCTIONS: u64 = 1_000_000;
 
 #[derive(Parser)]
+#[group(id = "sui-move-test")]
 pub struct Test {
     #[clap(flatten)]
     pub test: test::Test,
-    /// If `true`, enable linters
+    /// If `true`, disable linters
     #[clap(long, global = true)]
-    pub lint: bool,
+    pub no_lint: bool,
 }
 
 impl Test {
@@ -39,6 +43,11 @@ impl Test {
         build_config: BuildConfig,
         unit_test_config: UnitTestingConfig,
     ) -> anyhow::Result<UnitTestResult> {
+        if !cfg!(debug_assertions) && self.test.compute_coverage {
+            return Err(anyhow::anyhow!(
+                "The --coverage flag is currently supported only in debug builds. Please build the Sui CLI from source in debug mode."
+            ));
+        }
         // find manifest file directory from a given path or (if missing) from current dir
         let rerooted_path = base::reroot_path(path)?;
         // pre build for Sui-specific verifications
@@ -54,7 +63,7 @@ impl Test {
             with_unpublished_deps,
             dump_bytecode_as_base64,
             generate_struct_layouts,
-            self.lint,
+            !self.no_lint,
         )?;
         run_move_unit_tests(
             rerooted_path,
@@ -65,14 +74,29 @@ impl Test {
     }
 }
 
-static TEST_STORE: Lazy<TemporaryStore> = Lazy::new(|| {
-    TemporaryStore::new(
-        InMemoryStorage::new(vec![]),
-        InputObjects::new(vec![]),
-        TransactionDigest::random(),
-        &ProtocolConfig::get_for_min_version(),
-    )
-});
+struct DummyChildObjectStore {}
+
+impl ChildObjectResolver for DummyChildObjectStore {
+    fn read_child_object(
+        &self,
+        _parent: &ObjectID,
+        _child: &ObjectID,
+        _child_version_upper_bound: SequenceNumber,
+    ) -> SuiResult<Option<Object>> {
+        Ok(None)
+    }
+    fn get_object_received_at_version(
+        &self,
+        _owner: &ObjectID,
+        _receiving_object_id: &ObjectID,
+        _receive_object_at_version: SequenceNumber,
+        _epoch_id: sui_types::committee::EpochId,
+    ) -> SuiResult<Option<Object>> {
+        Ok(None)
+    }
+}
+
+static TEST_STORE: Lazy<DummyChildObjectStore> = Lazy::new(|| DummyChildObjectStore {});
 
 static SET_EXTENSION_HOOK: Lazy<()> =
     Lazy::new(|| set_extension_hook(Box::new(new_testing_object_and_natives_cost_runtime)));
@@ -96,7 +120,6 @@ pub fn run_move_unit_tests(
         build_config,
         UnitTestingConfig {
             report_stacktrace_on_abort: true,
-            ignore_compile_warnings: true,
             ..config
         },
         sui_move_natives::all_natives(/* silent */ false),
@@ -117,10 +140,11 @@ fn new_testing_object_and_natives_cost_runtime(ext: &mut NativeContextExtensions
         store,
         BTreeMap::new(),
         false,
-        &ProtocolConfig::get_for_min_version(),
+        &ProtocolConfig::get_for_max_version_UNSAFE(),
         metrics,
+        0, // epoch id
     ));
     ext.add(NativesCostTable::from_protocol_config(
-        &ProtocolConfig::get_for_min_version(),
+        &ProtocolConfig::get_for_max_version_UNSAFE(),
     ));
 }

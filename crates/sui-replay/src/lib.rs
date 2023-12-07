@@ -7,105 +7,132 @@ use config::ReplayableNetworkConfigSet;
 use fuzz::ReplayFuzzer;
 use fuzz::ReplayFuzzerConfig;
 use fuzz_mutations::base_fuzzers;
+use sui_types::digests::get_mainnet_chain_identifier;
+use sui_types::digests::get_testnet_chain_identifier;
 use sui_types::message_envelope::Message;
 use tracing::warn;
 use transaction_provider::{FuzzStartPoint, TransactionSource};
 
+use crate::replay::ExecutionSandboxState;
 use crate::replay::LocalExec;
 use crate::replay::ProtocolVersionSummary;
+use std::env;
 use std::io::BufRead;
 use std::path::PathBuf;
 use std::str::FromStr;
 use sui_config::node::ExpensiveSafetyCheckConfig;
+use sui_protocol_config::Chain;
 use sui_types::digests::TransactionDigest;
 use tracing::{error, info};
 pub mod config;
 mod data_fetcher;
-mod db_rider;
 pub mod fuzz;
 pub mod fuzz_mutations;
 mod replay;
 pub mod transaction_provider;
 pub mod types;
 
+static DEFAULT_SANDBOX_BASE_PATH: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/sandbox_snapshots");
+
+#[cfg(test)]
+mod tests;
+
 #[derive(Parser, Clone)]
-#[clap(rename_all = "kebab-case")]
+#[command(rename_all = "kebab-case")]
 pub enum ReplayToolCommand {
     /// Generate a new network config file
-    #[clap(name = "gen")]
+    #[command(name = "gen")]
     GenerateDefaultConfig,
 
-    /// Replay transaction
-    #[clap(name = "tx")]
-    ReplayTransaction {
-        #[clap(long, short)]
+    /// Persist sandbox state
+    #[command(name = "ps")]
+    PersistSandbox {
+        #[arg(long, short)]
         tx_digest: String,
-        #[clap(long, short)]
+        #[arg(long, short, default_value = DEFAULT_SANDBOX_BASE_PATH)]
+        base_path: PathBuf,
+    },
+
+    /// Replay from sandbox state file
+    /// This is a completely local execution
+    #[command(name = "rs")]
+    ReplaySandbox {
+        #[arg(long, short)]
+        path: PathBuf,
+    },
+
+    /// Replay transaction
+    #[command(name = "tx")]
+    ReplayTransaction {
+        #[arg(long, short)]
+        tx_digest: String,
+        #[arg(long, short)]
         show_effects: bool,
-        #[clap(long, short)]
+        #[arg(long, short)]
         diag: bool,
-        #[clap(long, short, allow_hyphen_values = true)]
+        #[arg(long, short, allow_hyphen_values = true)]
         executor_version_override: Option<i64>,
-        #[clap(long, short, allow_hyphen_values = true)]
+        #[arg(long, short, allow_hyphen_values = true)]
         protocol_version_override: Option<i64>,
     },
 
     /// Replay transactions listed in a file
-    #[clap(name = "rb")]
+    #[command(name = "rb")]
     ReplayBatch {
-        #[clap(long, short)]
+        #[arg(long, short)]
         path: PathBuf,
-        #[clap(long, short)]
+        #[arg(long, short)]
         terminate_early: bool,
-        #[clap(long, short, default_value = "16")]
+        #[arg(long, short, default_value = "16")]
         batch_size: u64,
     },
 
     /// Replay a transaction from a node state dump
-    #[clap(name = "rd")]
+    #[command(name = "rd")]
     ReplayDump {
-        #[clap(long, short)]
+        #[arg(long, short)]
         path: String,
-        #[clap(long, short)]
+        #[arg(long, short)]
         show_effects: bool,
     },
 
     /// Replay all transactions in a range of checkpoints
-    #[clap(name = "ch")]
+    #[command(name = "ch")]
     ReplayCheckpoints {
-        #[clap(long, short)]
+        #[arg(long, short)]
         start: u64,
-        #[clap(long, short)]
+        #[arg(long, short)]
         end: u64,
-        #[clap(long, short)]
+        #[arg(long, short)]
         terminate_early: bool,
-        #[clap(long, short, default_value = "16")]
+        #[arg(long, short, default_value = "16")]
         max_tasks: u64,
     },
 
     /// Replay all transactions in an epoch
-    #[clap(name = "ep")]
+    #[command(name = "ep")]
     ReplayEpoch {
-        #[clap(long, short)]
+        #[arg(long, short)]
         epoch: u64,
-        #[clap(long, short)]
+        #[arg(long, short)]
         terminate_early: bool,
-        #[clap(long, short, default_value = "16")]
+        #[arg(long, short, default_value = "16")]
         max_tasks: u64,
     },
 
     /// Run the replay based fuzzer
-    #[clap(name = "fz")]
+    #[command(name = "fz")]
     Fuzz {
-        #[clap(long, short)]
+        #[arg(long, short)]
         start: Option<FuzzStartPoint>,
-        #[clap(long, short)]
+        #[arg(long, short)]
         num_mutations_per_base: u64,
-        #[clap(long, short = 'b', default_value = "18446744073709551614")]
+        #[arg(long, short = 'b', default_value = "18446744073709551614")]
         num_base_transactions: u64,
     },
 
-    #[clap(name = "report")]
+    #[command(name = "report")]
     Report,
 }
 
@@ -123,6 +150,42 @@ pub async fn execute_replay_command(
         ExpensiveSafetyCheckConfig::default()
     };
     Ok(match cmd {
+        ReplayToolCommand::ReplaySandbox { path } => {
+            let contents = std::fs::read_to_string(path)?;
+            let sandbox_state: ExecutionSandboxState = serde_json::from_str(&contents)?;
+            info!("Executing tx: {}", sandbox_state.transaction_info.tx_digest);
+            let sandbox_state = LocalExec::certificate_execute_with_sandbox_state(
+                &sandbox_state,
+                None,
+                &sandbox_state.pre_exec_diag,
+            )
+            .await?;
+            sandbox_state.check_effects()?;
+            info!("Execution finished successfully. Local and on-chain effects match.");
+            None
+        }
+        ReplayToolCommand::PersistSandbox {
+            tx_digest,
+            base_path,
+        } => {
+            let tx_digest = TransactionDigest::from_str(&tx_digest)?;
+            info!("Executing tx: {}", tx_digest);
+            let sandbox_state = LocalExec::replay_with_network_config(
+                rpc_url,
+                cfg_path.map(|p| p.to_str().unwrap().to_string()),
+                tx_digest,
+                safety,
+                use_authority,
+                None,
+                None,
+            )
+            .await?;
+
+            let out = serde_json::to_string(&sandbox_state).unwrap();
+            let path = base_path.join(format!("{}.json", tx_digest));
+            std::fs::write(path, out)?;
+            None
+        }
         ReplayToolCommand::GenerateDefaultConfig => {
             let set = ReplayableNetworkConfigSet::default();
             let path = set.save_config(None).unwrap();
@@ -231,7 +294,6 @@ pub async fn execute_replay_command(
                     },
                 );
                 if chunk.len() == batch_size as usize {
-                    println!("=========================================================");
                     println!("Executing batch: {:?}", chunk);
                     // execute all in chunk
                     match exec_batch(
@@ -252,12 +314,11 @@ pub async fn execute_replay_command(
                         }
                     }
                     println!("Finished batch execution");
-                    println!("=========================================================");
+
                     chunk.clear();
                 }
             }
             if !chunk.is_empty() {
-                println!("=========================================================");
                 println!("Executing batch: {:?}", chunk);
                 match exec_batch(
                     rpc_url.clone(),
@@ -277,7 +338,6 @@ pub async fn execute_replay_command(
                     }
                 }
                 println!("Finished batch execution");
-                println!("=========================================================");
             }
 
             // TODO: clean this up
@@ -307,12 +367,12 @@ pub async fn execute_replay_command(
                 println!("{:#?}", sandbox_state.pre_exec_diag);
             }
             if show_effects {
-                println!("{:#?}", sandbox_state.local_exec_effects);
+                println!("{}", sandbox_state.local_exec_effects);
             }
 
             sandbox_state.check_effects()?;
 
-            info!("Execution finished successfully. Local and on-chain effects match.");
+            println!("Execution finished successfully. Local and on-chain effects match.");
             Some((1u64, 1u64))
         }
 
@@ -345,8 +405,8 @@ pub async fn execute_replay_command(
                     tx_digest,
                     start_epoch,
                     end_epoch,
-                    checkpoint_start,
-                    checkpoint_end
+                    checkpoint_start.unwrap_or(u64::MAX),
+                    checkpoint_end.unwrap_or(u64::MAX)
                 );
             }
 
@@ -473,4 +533,19 @@ pub async fn execute_replay_command(
             }
         }
     })
+}
+
+pub(crate) fn chain_from_chain_id(chain: &str) -> Chain {
+    let mainnet_chain_id = format!("{}", get_mainnet_chain_identifier());
+    // TODO: Since testnet periodically resets, we need to ensure that the chain id
+    // is updated to the latest one.
+    let testnet_chain_id = format!("{}", get_testnet_chain_identifier());
+
+    if mainnet_chain_id == chain {
+        Chain::Mainnet
+    } else if testnet_chain_id == chain {
+        Chain::Testnet
+    } else {
+        Chain::Unknown
+    }
 }

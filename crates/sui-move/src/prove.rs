@@ -9,13 +9,15 @@ use sui_types::sui_framework_address_concat_string;
 
 const SUI_NATIVE_TEMPLATE: &[u8] = include_bytes!("sui-natives.bpl");
 
+/// Run the Move Prover on the package at `path` (Warning: Move Prover support for Sui is currently limited)
 #[derive(Parser)]
-pub struct Prove {
+#[group(id = "sui-move-prover")]
+pub struct Prover {
     #[clap(flatten)]
     pub prove: prove::Prove,
 }
 
-impl Prove {
+impl Prover {
     pub fn execute(self, path: Option<PathBuf>, build_config: BuildConfig) -> anyhow::Result<()> {
         let rerooted_path = base::reroot_path(path)?;
         let prove::Prove {
@@ -91,6 +93,7 @@ impl Prove {
             ),
         );
 
+        eprintln!("WARNING: the level of Move Prover support for Sui is incomplete; use at your own risk as not everything is guaranteed to work (please file an issue if an update breaks existing usage but the level of current support is limited)");
         let prover_result = std::thread::spawn(move || {
             prove::run_move_prover(
                 build_config,

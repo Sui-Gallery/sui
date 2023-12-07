@@ -31,7 +31,6 @@ use sui_types::base_types::TransactionDigest;
 use sui_types::effects::{TransactionEffectsAPI, VerifiedCertifiedTransactionEffects};
 use sui_types::error::{SuiError, SuiResult};
 use sui_types::executable_transaction::VerifiedExecutableTransaction;
-use sui_types::object::Object;
 use sui_types::quorum_driver_types::{
     ExecuteTransactionRequest, ExecuteTransactionRequestType, ExecuteTransactionResponse,
     FinalizedEffects, QuorumDriverEffectsQueueResult, QuorumDriverError, QuorumDriverResponse,
@@ -202,10 +201,7 @@ where
             ExecuteTransactionRequestType::WaitForLocalExecution
         );
 
-        let Ok(result) = timeout(
-            WAIT_FOR_FINALITY_TIMEOUT,
-            ticket,
-        ).await else {
+        let Ok(result) = timeout(WAIT_FOR_FINALITY_TIMEOUT, ticket).await else {
             debug!(?tx_digest, "Timeout waiting for transaction finality.");
             self.metrics.wait_for_finality_timeout.inc();
             return Err(QuorumDriverError::TimeoutBeforeFinality);
@@ -223,11 +219,7 @@ where
             Ok(Err(err)) => Err(err),
             Ok(Ok(response)) => {
                 good_response_metrics.inc();
-                let QuorumDriverResponse {
-                    effects_cert,
-                    objects,
-                    ..
-                } = response;
+                let QuorumDriverResponse { effects_cert, .. } = response;
                 if !wait_for_local_execution {
                     return Ok(ExecuteTransactionResponse::EffectsCert(Box::new((
                         FinalizedEffects::new_from_effects_cert(effects_cert.into()),
@@ -236,51 +228,29 @@ where
                     ))));
                 }
 
-                // TODO: local execution for shared-object txns is disabled due to the fact that
-                // it can cause forks on transactions that read child objects from read-only
-                // parent shared objects.
-                //
-                // This can be re-enabled after MVCC for child objects is merged.
-                if transaction.contains_shared_object() {
-                    self.validator_state
-                        .database
-                        .notify_read_executed_effects_digests(vec![tx_digest])
-                        .await
-                        .map_err(|e| {
-                            warn!(?tx_digest, "notify_read_effects failed: {e:?}");
-                            QuorumDriverError::QuorumDriverInternalError(e)
-                        })?;
-                    Ok(ExecuteTransactionResponse::EffectsCert(Box::new((
+                let executable_tx = VerifiedExecutableTransaction::new_from_quorum_execution(
+                    transaction,
+                    effects_cert.executed_epoch(),
+                );
+
+                match Self::execute_finalized_tx_locally_with_timeout(
+                    &self.validator_state,
+                    &executable_tx,
+                    &effects_cert,
+                    &self.metrics,
+                )
+                .await
+                {
+                    Ok(_) => Ok(ExecuteTransactionResponse::EffectsCert(Box::new((
                         FinalizedEffects::new_from_effects_cert(effects_cert.into()),
                         response.events,
                         true,
-                    ))))
-                } else {
-                    let executable_tx = VerifiedExecutableTransaction::new_from_quorum_execution(
-                        transaction,
-                        effects_cert.executed_epoch(),
-                    );
-
-                    match Self::execute_finalized_tx_locally_with_timeout(
-                        &self.validator_state,
-                        &executable_tx,
-                        &effects_cert,
-                        objects,
-                        &self.metrics,
-                    )
-                    .await
-                    {
-                        Ok(_) => Ok(ExecuteTransactionResponse::EffectsCert(Box::new((
-                            FinalizedEffects::new_from_effects_cert(effects_cert.into()),
-                            response.events,
-                            true,
-                        )))),
-                        Err(_) => Ok(ExecuteTransactionResponse::EffectsCert(Box::new((
-                            FinalizedEffects::new_from_effects_cert(effects_cert.into()),
-                            response.events,
-                            false,
-                        )))),
-                    }
+                    )))),
+                    Err(_) => Ok(ExecuteTransactionResponse::EffectsCert(Box::new((
+                        FinalizedEffects::new_from_effects_cert(effects_cert.into()),
+                        response.events,
+                        false,
+                    )))),
                 }
             }
         }
@@ -333,7 +303,6 @@ where
         validator_state: &Arc<AuthorityState>,
         transaction: &VerifiedExecutableTransaction,
         effects_cert: &VerifiedCertifiedTransactionEffects,
-        objects: Vec<Object>,
         metrics: &TransactionOrchestratorMetrics,
     ) -> SuiResult {
         let epoch_store = validator_state.load_epoch_store_one_call_per_task();
@@ -362,16 +331,19 @@ where
         } else {
             metrics.local_execution_latency_single_writer.start_timer()
         };
+        debug!(?tx_digest, "Executing finalized tx locally.");
         match timeout(
             LOCAL_EXECUTION_TIMEOUT,
             validator_state.fullnode_execute_certificate_with_effects(
                 transaction,
                 effects_cert,
-                objects,
                 &epoch_store,
             ),
         )
-        .instrument(error_span!("transaction_orchestrator", ?tx_digest))
+        .instrument(error_span!(
+            "transaction_orchestrator::local_execution",
+            ?tx_digest
+        ))
         .await
         {
             Err(_elapsed) => {
@@ -408,14 +380,7 @@ where
     ) {
         loop {
             match effects_receiver.recv().await {
-                Ok(Ok((
-                    transaction,
-                    QuorumDriverResponse {
-                        effects_cert,
-                        objects,
-                        ..
-                    },
-                ))) => {
+                Ok(Ok((transaction, QuorumDriverResponse { effects_cert, .. }))) => {
                     let tx_digest = transaction.digest();
                     if let Err(err) = pending_transaction_log.finish_transaction(tx_digest) {
                         panic!(
@@ -453,7 +418,6 @@ where
                         &validator_state,
                         &executable_tx,
                         &effects_cert,
-                        objects,
                         &metrics,
                     )
                     .await;

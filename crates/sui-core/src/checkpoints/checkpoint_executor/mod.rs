@@ -233,6 +233,7 @@ impl CheckpointExecutor {
 
     /// Post processing and plumbing after we executed a checkpoint. This function is guaranteed
     /// to be called in the order of checkpoint sequence number.
+    #[instrument(level = "debug", skip_all)]
     fn process_executed_checkpoint(&self, checkpoint: &VerifiedCheckpoint) {
         // Ensure that we are not skipping checkpoints at any point
         let seq = *checkpoint.sequence_number();
@@ -281,6 +282,7 @@ impl CheckpointExecutor {
         checkpoint.report_checkpoint_age_ms(&self.metrics.last_executed_checkpoint_age_ms);
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn schedule_synced_checkpoints(
         &self,
         pending: &mut CheckpointExecutionBuffer,
@@ -290,10 +292,9 @@ impl CheckpointExecutor {
         let Some(latest_synced_checkpoint) = self
             .checkpoint_store
             .get_highest_synced_checkpoint()
-            .expect("Failed to read highest synced checkpoint") else {
-            debug!(
-                "No checkpoints to schedule, highest synced checkpoint is None",
-            );
+            .expect("Failed to read highest synced checkpoint")
+        else {
+            debug!("No checkpoints to schedule, highest synced checkpoint is None",);
             return;
         };
 
@@ -358,6 +359,7 @@ impl CheckpointExecutor {
 
     // Logs within the function are annotated with the checkpoint sequence number and epoch,
     // from schedule_checkpoint().
+    #[instrument(level = "debug", skip_all)]
     async fn execute_checkpoint(
         &self,
         checkpoint: VerifiedCheckpoint,
@@ -401,6 +403,7 @@ impl CheckpointExecutor {
 
     // Logs within the function are annotated with the checkpoint sequence number and epoch,
     // from schedule_checkpoint().
+    #[instrument(level = "debug", skip_all)]
     async fn execute_transactions(
         &self,
         execution_digests: Vec<ExecutionDigests>,
@@ -587,6 +590,8 @@ impl CheckpointExecutor {
                         checkpoint.clone(),
                     )
                     .await;
+
+                    fail_point_async!("prune-and-compact");
 
                     // For finalizing the checkpoint, we need to pass in all checkpoint
                     // transaction effects, not just the change_epoch tx effects. However,
@@ -840,7 +845,7 @@ fn extract_end_of_epoch_tx(
         .data()
         .intent_message()
         .value
-        .is_change_epoch_tx());
+        .is_end_of_epoch_tx());
 
     Some((*digests, change_epoch_tx))
 }
@@ -899,7 +904,7 @@ fn get_unexecuted_transactions(
                     change_epoch_tx_digest, checkpoint.sequence_number()
                 )
             );
-        assert!(change_epoch_tx.data().intent_message().value.is_change_epoch_tx());
+        assert!(change_epoch_tx.data().intent_message().value.is_end_of_epoch_tx());
     });
 
     let all_tx_digests: Vec<TransactionDigest> =
@@ -936,7 +941,7 @@ fn get_unexecuted_transactions(
     let executable_txns: Vec<_> = if let Some(full_contents_txns) = full_contents_txns {
         unexecuted_txns
             .into_iter()
-            .zip(expected_effects_digests.into_iter())
+            .zip(expected_effects_digests)
             .map(|(tx_digest, expected_effects_digest)| {
                 let tx = &full_contents_txns.get(&tx_digest).unwrap().transaction;
                 (
@@ -954,7 +959,7 @@ fn get_unexecuted_transactions(
             .multi_get_transaction_blocks(&unexecuted_txns)
             .expect("Failed to get checkpoint txes from store")
             .into_iter()
-            .zip(expected_effects_digests.into_iter())
+            .zip(expected_effects_digests)
             .enumerate()
             .map(|(i, (tx, expected_effects_digest))| {
                 let tx = tx.unwrap_or_else(||
@@ -964,7 +969,7 @@ fn get_unexecuted_transactions(
                     )
                 );
                 // change epoch tx is handled specially in check_epoch_last_checkpoint
-                assert!(!tx.data().intent_message().value.is_change_epoch_tx());
+                assert!(!tx.data().intent_message().value.is_end_of_epoch_tx());
                 (
                     VerifiedExecutableTransaction::new_from_checkpoint(
                         tx,
@@ -980,6 +985,7 @@ fn get_unexecuted_transactions(
     (execution_digests, all_tx_digests, executable_txns)
 }
 
+#[instrument(level = "debug", skip_all)]
 fn finalize_checkpoint(
     authority_store: Arc<AuthorityStore>,
     tx_digests: &[TransactionDigest],

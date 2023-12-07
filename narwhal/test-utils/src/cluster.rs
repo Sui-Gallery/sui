@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use crate::{latest_protocol_version, temp_dir, CommitteeFixture};
-use config::{AuthorityIdentifier, Committee, Parameters, WorkerCache, WorkerId};
+use config::{AuthorityIdentifier, ChainIdentifier, Committee, Parameters, WorkerCache, WorkerId};
 use crypto::{KeyPair, NetworkKeyPair, PublicKey};
 use executor::SerializedTransaction;
 use fastcrypto::traits::KeyPair as _;
@@ -260,7 +260,6 @@ impl Cluster {
     fn parameters() -> Parameters {
         Parameters {
             batch_size: 200,
-            max_header_delay: Duration::from_secs(2),
             ..Parameters::default()
         }
     }
@@ -352,11 +351,12 @@ impl PrimaryNodeDetails {
                 self.key_pair.copy(),
                 self.network_key_pair.copy(),
                 self.committee.clone(),
+                ChainIdentifier::unknown(),
                 latest_protocol_version(),
                 self.worker_cache.clone(),
                 client,
                 &primary_store,
-                Arc::new(SimpleExecutionState::new(tx_transaction_confirmation)),
+                SimpleExecutionState::new(tx_transaction_confirmation),
             )
             .await
             .unwrap();
@@ -466,7 +466,7 @@ impl WorkerNodeDetails {
                 self.worker_cache.clone(),
                 client,
                 &worker_store,
-                TrivialTransactionValidator::default(),
+                TrivialTransactionValidator,
                 None,
             )
             .await
@@ -513,6 +513,7 @@ struct AuthorityDetailsInternal {
     workers: HashMap<WorkerId, WorkerNodeDetails>,
 }
 
+#[allow(clippy::arc_with_non_send_sync)]
 impl AuthorityDetails {
     pub fn new(
         id: usize,

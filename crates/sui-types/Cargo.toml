@@ -35,7 +35,6 @@ enum_dispatch.workspace = true
 eyre.workspace = true
 indexmap.workspace = true
 derivative.workspace = true
-parking_lot.workspace = true
 
 move-binary-format.workspace = true
 move-bytecode-utils.workspace = true
@@ -59,11 +58,11 @@ sui-enum-compat-util.workspace = true
 fastcrypto = { workspace = true, features = ["copy_key"] }
 fastcrypto-zkp.workspace = true
 
-typed-store.workspace = true
-workspace-hack = { version = "0.1", path = "../workspace-hack" }
+typed-store-error.workspace = true
 derive_more.workspace = true
 proptest.workspace = true
 proptest-derive.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 bincode.workspace = true
@@ -71,6 +70,7 @@ criterion.workspace = true
 proptest.workspace = true
 proptest-derive.workspace = true
 serde_yaml.workspace = true
+expect-test.workspace = true
 
 [[bench]]
 name = "accumulator_bench"

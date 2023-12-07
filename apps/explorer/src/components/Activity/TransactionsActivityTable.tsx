@@ -35,7 +35,7 @@ export function TransactionsActivityTable({
 	const { data: count } = useQuery({
 		queryKey: ['transactions', 'count'],
 		queryFn: () => client.getTotalTransactionBlocks(),
-		cacheTime: 24 * 60 * 60 * 1000,
+		gcTime: 24 * 60 * 60 * 1000,
 		staleTime: Infinity,
 		retry: false,
 	});
@@ -44,7 +44,7 @@ export function TransactionsActivityTable({
 		limit,
 		refetchInterval,
 	);
-	const { data, isFetching, pagination, isLoading, isError } = useCursorPagination(transactions);
+	const { data, isFetching, pagination, isPending, isError } = useCursorPagination(transactions);
 	const goToFirstPageRef = useRef(pagination.onFirst);
 	goToFirstPageRef.current = pagination.onFirst;
 	const cardData = data ? genTableDataFromTxData(data.data) : undefined;
@@ -59,8 +59,8 @@ export function TransactionsActivityTable({
 					Failed to load Transactions
 				</div>
 			)}
-			<div className="flex flex-col space-y-3 text-left xl:pr-10">
-				{isLoading || isFetching || !cardData ? (
+			<div className="flex flex-col space-y-3 text-left">
+				{isPending || isFetching || !cardData ? (
 					<PlaceholderTable
 						rowCount={limit}
 						rowHeight="16px"

@@ -6,7 +6,11 @@ use fastcrypto::encoding::{Base64, Encoding};
 use fastcrypto::hash::HashFunction;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fs, path::Path};
-use sui_types::base_types::{ObjectID, SuiAddress};
+use sui_types::authenticator_state::{
+    get_authenticator_state, get_authenticator_state_obj_initial_shared_version,
+    AuthenticatorStateInner,
+};
+use sui_types::base_types::{ObjectID, SequenceNumber, SuiAddress};
 use sui_types::clock::Clock;
 use sui_types::committee::CommitteeWithNetworkMetadata;
 use sui_types::crypto::DefaultHash;
@@ -15,6 +19,7 @@ use sui_types::gas_coin::TOTAL_SUPPLY_MIST;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointContents, CheckpointSummary, VerifiedCheckpoint,
 };
+use sui_types::randomness_state::get_randomness_state_obj_initial_shared_version;
 use sui_types::sui_system_state::{
     get_sui_system_state, get_sui_system_state_wrapper, SuiSystemState, SuiSystemStateTrait,
     SuiSystemStateWrapper, SuiValidatorGenesis,
@@ -148,6 +153,16 @@ impl Genesis {
 
     pub fn sui_system_object(&self) -> SuiSystemState {
         get_sui_system_state(&self.objects()).expect("Sui System State object must always exist")
+    }
+
+    pub fn authenticator_state_obj_initial_shared_version(&self) -> Option<SequenceNumber> {
+        get_authenticator_state_obj_initial_shared_version(&self.objects())
+            .expect("Read from genesis cannot fail")
+    }
+
+    pub fn randomness_state_obj_initial_shared_version(&self) -> Option<SequenceNumber> {
+        get_randomness_state_obj_initial_shared_version(&self.objects())
+            .expect("Read from genesis cannot fail")
     }
 
     pub fn clock(&self) -> Clock {
@@ -316,6 +331,10 @@ impl UnsignedGenesis {
 
     pub fn sui_system_object(&self) -> SuiSystemState {
         get_sui_system_state(&self.objects()).expect("Sui System State object must always exist")
+    }
+
+    pub fn authenticator_state_object(&self) -> Option<AuthenticatorStateInner> {
+        get_authenticator_state(&self.objects()).expect("read from genesis cannot fail")
     }
 }
 

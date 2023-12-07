@@ -24,7 +24,7 @@ use sui_types::balance::Supply;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::coin::{CoinMetadata, TreasuryCap};
 use sui_types::effects::TransactionEffectsAPI;
-use sui_types::gas_coin::GAS;
+use sui_types::gas_coin::{GAS, TOTAL_SUPPLY_MIST};
 use sui_types::object::Object;
 use sui_types::parse_sui_struct_tag;
 
@@ -36,12 +36,12 @@ use crate::authority_state::StateRead;
 use crate::error::{Error, RpcInterimResult, SuiRpcInputError};
 use crate::{with_tracing, SuiRpcModule};
 
-fn parse_to_struct_tag(coin_type: &str) -> Result<StructTag, SuiRpcInputError> {
+pub fn parse_to_struct_tag(coin_type: &str) -> Result<StructTag, SuiRpcInputError> {
     parse_sui_struct_tag(coin_type)
         .map_err(|e| SuiRpcInputError::CannotParseSuiStructTag(format!("{e}")))
 }
 
-fn parse_to_type_tag(coin_type: Option<String>) -> Result<TypeTag, SuiRpcInputError> {
+pub fn parse_to_type_tag(coin_type: Option<String>) -> Result<TypeTag, SuiRpcInputError> {
     Ok(TypeTag::Struct(Box::new(match coin_type {
         Some(c) => parse_to_struct_tag(&c)?,
         None => GAS::type_(),
@@ -219,7 +219,9 @@ impl CoinReadApiServer for CoinReadApi {
         with_tracing!(async move {
             let coin_struct = parse_to_struct_tag(&coin_type)?;
             Ok(if GAS::is_gas(&coin_struct) {
-                Supply { value: 0 }
+                Supply {
+                    value: TOTAL_SUPPLY_MIST,
+                }
             } else {
                 let treasury_cap_object = self
                     .internal
@@ -414,7 +416,6 @@ mod tests {
     use sui_types::coin::TreasuryCap;
     use sui_types::digests::{ObjectDigest, TransactionDigest, TransactionEventsDigest};
     use sui_types::effects::TransactionEffects;
-    use sui_types::effects::TransactionEffectsV1;
     use sui_types::error::{SuiError, SuiResult};
     use sui_types::gas_coin::GAS;
     use sui_types::id::UID;
@@ -424,7 +425,7 @@ mod tests {
     use sui_types::object::Object;
     use sui_types::utils::create_fake_transaction;
     use sui_types::{parse_sui_struct_tag, TypeTag};
-    use typed_store::TypedStoreError;
+    use typed_store_error::TypedStoreError;
 
     mock! {
         pub KeyValueStore {}
@@ -444,6 +445,18 @@ mod tests {
                 checkpoint_summaries_by_digest: &[CheckpointDigest],
                 checkpoint_contents_by_digest: &[CheckpointContentsDigest],
             ) -> SuiResult<KVStoreCheckpointData>;
+
+            async fn deprecated_get_transaction_checkpoint(
+                &self,
+                digest: TransactionDigest,
+            ) -> SuiResult<Option<CheckpointSequenceNumber>>;
+
+            async fn get_object(&self, object_id: ObjectID, version: SequenceNumber) -> SuiResult<Option<Object>>;
+
+            async fn multi_get_transaction_checkpoint(
+                &self,
+                digests: &[TransactionDigest],
+            ) -> SuiResult<Vec<Option<CheckpointSequenceNumber>>>;
         }
     }
 
@@ -1212,8 +1225,7 @@ mod tests {
         #[tokio::test]
         async fn test_object_not_found() {
             let transaction_digest = TransactionDigest::from([0; 32]);
-            let transaction_effects: TransactionEffects =
-                TransactionEffects::V1(TransactionEffectsV1::default());
+            let transaction_effects = TransactionEffects::default();
 
             let mut mock_state = MockStateRead::new();
             mock_state
@@ -1286,7 +1298,7 @@ mod tests {
             let response = coin_read_api.get_total_supply(coin_type.to_string()).await;
 
             let supply = response.unwrap();
-            let expected = expect!["0"];
+            let expected = expect!["10000000000000000000"];
             expected.assert_eq(&supply.value.to_string());
         }
 
@@ -1323,8 +1335,7 @@ mod tests {
             let package_id = get_test_package_id();
             let (coin_name, _, _, _, _) = get_test_treasury_cap_peripherals(package_id);
             let transaction_digest = TransactionDigest::from([0; 32]);
-            let transaction_effects: TransactionEffects =
-                TransactionEffects::V1(TransactionEffectsV1::default());
+            let transaction_effects = TransactionEffects::default();
 
             let mut mock_state = MockStateRead::new();
             mock_state

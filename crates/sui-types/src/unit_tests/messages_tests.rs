@@ -727,7 +727,7 @@ fn test_sponsored_transaction_message() {
     .unwrap();
 
     assert_eq!(
-        transaction.get_signer_sig_mapping().unwrap(),
+        transaction.get_signer_sig_mapping(true).unwrap(),
         BTreeMap::from([(sender, &sender_sig), (sponsor, &sponsor_sig)]),
     );
 
@@ -1140,7 +1140,7 @@ fn test_move_input_objects() {
         SuiAddress::random_for_testing_only(),
         vec![gas_object_ref],
         builder.finish(),
-        TEST_ONLY_GAS_UNIT_FOR_GENERIC,
+        1_000_000, // any random number the transaction is not run
         1,
     );
     let mut input_objects = data.input_objects().unwrap();

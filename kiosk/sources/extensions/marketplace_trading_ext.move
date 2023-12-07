@@ -29,7 +29,7 @@ module kiosk::marketplace_trading_ext {
     /// Trying to purchase or delist an item that is not listed.
     const ENotListed: u64 = 1;
     /// The payment is not enough to purchase the item.
-    const EInsufficientPayment: u64 = 2;
+    const EIncorrectAmount: u64 = 2;
 
     // === Events ===
 
@@ -38,22 +38,20 @@ module kiosk::marketplace_trading_ext {
         kiosk_id: ID,
         item_id: ID,
         price: u64,
-        kiosk_owner: Option<address>
+        is_personal: bool
     }
 
     /// An item has been delisted from a Marketplace.
     struct ItemDelisted<phantom T, phantom Market> has copy, drop {
         kiosk_id: ID,
         item_id: ID,
-        kiosk_owner: Option<address>
+        is_personal: bool
     }
 
     /// An item has been purchased from a Marketplace.
     struct ItemPurchased<phantom T, phantom Market> has copy, drop {
         kiosk_id: ID,
-        from: address,
         item_id: ID,
-        price: u64,
         kiosk_owner: Option<address>
     }
 
@@ -86,7 +84,7 @@ module kiosk::marketplace_trading_ext {
         bag::add(ext::storage_mut(Extension {}, self), item_id, mkt_cap);
 
         event::emit(ItemListed<T, Market> {
-            kiosk_owner: personal_kiosk::try_owner(self),
+            is_personal: personal_kiosk::is_personal(self),
             kiosk_id: object::id(self),
             item_id,
             price,
@@ -107,7 +105,7 @@ module kiosk::marketplace_trading_ext {
         mkt::return_cap<T, Market>(self, mkt_cap, ctx);
 
         event::emit(ItemDelisted<T, Market> {
-            kiosk_owner: personal_kiosk::try_owner(self),
+            is_personal: personal_kiosk::is_personal(self),
             kiosk_id: object::id(self),
             item_id
         });
@@ -123,15 +121,12 @@ module kiosk::marketplace_trading_ext {
         assert!(is_listed<T, Market>(self, item_id), ENotListed);
 
         let mkt_cap = bag::remove(ext::storage_mut(Extension {}, self), item_id);
-        let price = coin::value(&payment);
-        assert!(price >= mkt::min_price(&mkt_cap), EInsufficientPayment);
+        assert!(coin::value(&payment) == mkt::min_price(&mkt_cap), EIncorrectAmount);
 
         event::emit(ItemPurchased<T, Market> {
             kiosk_owner: personal_kiosk::try_owner(self),
-            from: kiosk::owner(self),
             kiosk_id: object::id(self),
-            item_id,
-            price
+            item_id
         });
 
         mkt::purchase(self, mkt_cap, payment, ctx)

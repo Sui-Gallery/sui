@@ -11,12 +11,11 @@ use futures::StreamExt;
 use mysten_metrics::metered_channel::Receiver;
 use mysten_metrics::{monitored_future, spawn_logged_monitored_task};
 use network::anemo_ext::NetworkExt;
-use parking_lot::Mutex;
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 use storage::CertificateStore;
 use sui_macros::fail_point_async;
+use sui_protocol_config::ProtocolConfig;
 use tokio::{
     sync::oneshot,
     task::{JoinHandle, JoinSet},
@@ -26,7 +25,7 @@ use types::{
     ensure,
     error::{DagError, DagResult},
     Certificate, CertificateDigest, ConditionalBroadcastReceiver, Header, HeaderAPI,
-    PrimaryToPrimaryClient, RequestVoteRequest, Round, Vote, VoteAPI,
+    PrimaryToPrimaryClient, RequestVoteRequest, Vote, VoteAPI,
 };
 
 #[cfg(test)]
@@ -43,6 +42,7 @@ pub struct Certifier {
     authority_id: AuthorityIdentifier,
     /// The committee information.
     committee: Committee,
+    protocol_config: ProtocolConfig,
     /// The persistent storage keyed to certificates.
     certificate_store: CertificateStore,
     /// Handles synchronization with other nodes and our workers.
@@ -53,8 +53,9 @@ pub struct Certifier {
     rx_shutdown: ConditionalBroadcastReceiver,
     /// Receives our newly created headers from the `Proposer`.
     rx_headers: Receiver<Header>,
-    /// Used to cancel vote requests for proposing header that are no longer needed.
-    cancel_proposing_headers: Arc<Mutex<VecDeque<(Round, oneshot::Sender<()>)>>>,
+    /// Used to cancel vote requests for a previously-proposed header that is being replaced
+    /// before a certificate could be formed.
+    cancel_proposed_header: Option<oneshot::Sender<()>>,
     /// Handle to propose_header task. Our target is to have only one task running always, thus
     /// we cancel the previously running before we spawn the next one. However, we don't wait for
     /// the previous to finish to spawn the new one, so we might temporarily have more that one
@@ -72,6 +73,7 @@ impl Certifier {
     pub fn spawn(
         authority_id: AuthorityIdentifier,
         committee: Committee,
+        protocol_config: ProtocolConfig,
         certificate_store: CertificateStore,
         synchronizer: Arc<Synchronizer>,
         signature_service: SignatureService<Signature, { crypto::INTENT_MESSAGE_LENGTH }>,
@@ -85,12 +87,13 @@ impl Certifier {
                 Self {
                     authority_id,
                     committee,
+                    protocol_config,
                     certificate_store,
                     synchronizer,
                     signature_service,
                     rx_shutdown,
                     rx_headers,
-                    cancel_proposing_headers: Default::default(),
+                    cancel_proposed_header: None,
                     propose_header_tasks: JoinSet::new(),
                     network: primary_network,
                     metrics,
@@ -238,12 +241,12 @@ impl Certifier {
     async fn propose_header(
         authority_id: AuthorityIdentifier,
         committee: Committee,
+        protocol_config: ProtocolConfig,
         certificate_store: CertificateStore,
         signature_service: SignatureService<Signature, { crypto::INTENT_MESSAGE_LENGTH }>,
         metrics: Arc<PrimaryMetrics>,
         network: anemo::Network,
         header: Header,
-        cancel_proposing_headers: Arc<Mutex<VecDeque<(Round, oneshot::Sender<()>)>>>,
         mut cancel: oneshot::Receiver<()>,
     ) -> DagResult<Certificate> {
         if header.epoch() != committee.epoch() {
@@ -261,7 +264,7 @@ impl Certifier {
         metrics.proposed_header_round.set(header.round() as i64);
 
         // Reset the votes aggregator and sign our own header.
-        let mut votes_aggregator = VotesAggregator::new(metrics.clone());
+        let mut votes_aggregator = VotesAggregator::new(&protocol_config, metrics.clone());
         let vote = Vote::new(&header, &authority_id, &signature_service).await;
         let mut certificate = votes_aggregator.append(vote, &committee, &header)?;
 
@@ -332,15 +335,6 @@ impl Certifier {
         })?;
         debug!("Assembled {certificate:?}");
 
-        let mut cancel_proposing_headers = cancel_proposing_headers.lock();
-        while let Some(&(round, _)) = cancel_proposing_headers.front() {
-            if round > header.round() {
-                break;
-            }
-            let (_round, sender) = cancel_proposing_headers.pop_front().unwrap();
-            let _ = sender.send(());
-        }
-
         Ok(certificate)
     }
 
@@ -373,16 +367,10 @@ impl Certifier {
                 // TODO: move logic into Proposer.
                 Some(header) = self.rx_headers.recv() => {
                     let (tx_cancel, rx_cancel) = oneshot::channel();
-                    {
-                        let mut cancel_proposing_headers = self.cancel_proposing_headers.lock();
-                        cancel_proposing_headers.push_back((header.round(), tx_cancel));
-
-                        const MAX_PROPOSING_HEADERS: usize = 3;
-                        while cancel_proposing_headers.len() > MAX_PROPOSING_HEADERS {
-                            let (_round, sender) = cancel_proposing_headers.pop_front().unwrap();
-                            let _ = sender.send(());
-                        }
+                    if let Some(cancel) = self.cancel_proposed_header {
+                        let _ = cancel.send(());
                     }
+                    self.cancel_proposed_header = Some(tx_cancel);
 
                     let name = self.authority_id;
                     let committee = self.committee.clone();
@@ -390,17 +378,17 @@ impl Certifier {
                     let signature_service = self.signature_service.clone();
                     let metrics = self.metrics.clone();
                     let network = self.network.clone();
-                    let cancel_proposing_headers = self.cancel_proposing_headers.clone();
+                    let protocol_config = self.protocol_config.clone();
                     fail_point_async!("narwhal-delay");
                     self.propose_header_tasks.spawn(monitored_future!(Self::propose_header(
                         name,
                         committee,
+                        protocol_config,
                         certificate_store,
                         signature_service,
                         metrics,
                         network,
                         header,
-                        cancel_proposing_headers,
                         rx_cancel,
                     )));
                     Ok(())

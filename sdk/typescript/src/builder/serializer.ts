@@ -1,15 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isValidSuiAddress } from '../utils/sui-types.js';
-import { extractStructTag } from '../types/index.js';
-import {
-	ID_STRUCT_NAME,
-	MOVE_STDLIB_ADDRESS,
-	OBJECT_MODULE_NAME,
-	SUI_FRAMEWORK_ADDRESS,
-} from '../framework/framework.js';
 import type { SuiJsonValue, SuiMoveNormalizedType } from '../client/index.js';
+import { extractStructTag } from '../types/index.js';
+import { MOVE_STDLIB_ADDRESS, SUI_FRAMEWORK_ADDRESS } from '../utils/index.js';
+import { isValidSuiAddress } from '../utils/sui-types.js';
+
+const OBJECT_MODULE_NAME = 'object';
+const ID_STRUCT_NAME = 'ID';
 
 const STD_ASCII_MODULE_NAME = 'ascii';
 const STD_ASCII_STRUCT_NAME = 'String';

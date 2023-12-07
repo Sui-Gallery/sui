@@ -16,7 +16,6 @@ eyre.workspace = true
 fdlimit.workspace = true
 once_cell.workspace = true
 tap.workspace = true
-num_cpus.workspace = true
 prometheus.workspace = true
 hdrhistogram.workspace = true
 rocksdb.workspace = true
@@ -24,12 +23,13 @@ serde.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 tracing.workspace = true
+typed-store-error.workspace = true
 sui-macros.workspace = true
 ouroboros.workspace = true
 rand.workspace = true
 async-trait.workspace = true
 itertools.workspace = true
-workspace-hack = { version = "0.1", path = "../workspace-hack" }
+workspace-hack.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

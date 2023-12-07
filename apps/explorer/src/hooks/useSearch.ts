@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isSuiNSName, useSuiNSEnabled } from '@mysten/core';
-import { useLatestSuiSystemState, useSuiClient } from '@mysten/dapp-kit';
+import { useSuiClientQuery, useSuiClient } from '@mysten/dapp-kit';
 import { type SuiClient, type SuiSystemStateSummary } from '@mysten/sui.js/client';
 import {
 	isValidTransactionDigest,
@@ -62,7 +62,7 @@ const getResultsForCheckpoint = async (client: SuiClient, query: string) => {
 
 const getResultsForAddress = async (client: SuiClient, query: string, suiNSEnabled: boolean) => {
 	if (suiNSEnabled && isSuiNSName(query)) {
-		const resolved = await client.resolveNameServiceAddress({ name: query });
+		const resolved = await client.resolveNameServiceAddress({ name: query.toLowerCase() });
 		if (!resolved) return null;
 		return [
 			{
@@ -125,7 +125,7 @@ const getResultsForValidatorByPoolIdOrSuiAddress = async (
 
 export function useSearch(query: string) {
 	const client = useSuiClient();
-	const { data: systemStateSummery } = useLatestSuiSystemState();
+	const { data: systemStateSummery } = useSuiClientQuery('getLatestSuiSystemState');
 	const suiNSEnabled = useSuiNSEnabled();
 
 	return useQuery({
@@ -145,6 +145,6 @@ export function useSearch(query: string) {
 			return results.map(({ value }) => value).flat();
 		},
 		enabled: !!query,
-		cacheTime: 10000,
+		gcTime: 10000,
 	});
 }

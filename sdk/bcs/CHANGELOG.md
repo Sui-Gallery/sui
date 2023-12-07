@@ -1,5 +1,24 @@
 # Change Log
 
+## 0.8.1
+
+### Patch Changes
+
+- b48289346: Mark packages as being side-effect free.
+
+## 0.8.0
+
+### Minor Changes
+
+- 1bc430161: Add new type-safe schema builder. See https://sui-typescript-docs.vercel.app/bcs for updated documentation
+- e4484852b: Add isSerializedBcs helper
+
+## 0.7.4
+
+### Patch Changes
+
+- 290c8e640: Fix parsing of hex strings where leading 0s have been trimmed
+
 ## 0.7.3
 
 ### Patch Changes

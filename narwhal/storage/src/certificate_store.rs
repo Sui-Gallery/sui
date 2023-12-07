@@ -14,10 +14,7 @@ use tap::Tap;
 use crate::StoreResult;
 use config::AuthorityIdentifier;
 use mysten_common::sync::notify_read::NotifyRead;
-use store::{
-    rocks::{DBMap, TypedStoreError::RocksDBError},
-    Map,
-};
+use store::{rocks::DBMap, Map, TypedStoreError::RocksDBError};
 use types::{Certificate, CertificateDigest, Round};
 
 #[derive(Clone)]
@@ -534,10 +531,13 @@ impl<T: Cache> CertificateStore<T> {
     /// Retrieves all the certificates with round >= the provided round.
     /// The result is returned with certificates sorted in round asc order
     pub fn after_round(&self, round: Round) -> StoreResult<Vec<Certificate>> {
-        // Restrict the scan to at or after the requested round.
-        let iter = self
-            .certificate_id_by_round
-            .iter_with_bounds(Some((round, AuthorityIdentifier(0))), None);
+        // Skip to a row at or before the requested round.
+        // TODO: Add a more efficient seek method to typed store.
+        let mut iter = self.certificate_id_by_round.unbounded_iter();
+        if round > 0 {
+            iter = iter.skip_to(&(round - 1, AuthorityIdentifier::default()))?;
+        }
+
         let mut digests = Vec::new();
         for ((r, _), d) in iter {
             match r.cmp(&round) {
@@ -545,7 +545,7 @@ impl<T: Cache> CertificateStore<T> {
                     digests.push(d);
                 }
                 Ordering::Less => {
-                    unreachable!("Failed to specify start range. Round {}", round);
+                    continue;
                 }
             }
         }
@@ -587,41 +587,43 @@ impl<T: Cache> CertificateStore<T> {
         Ok(result)
     }
 
-    /// Retrieves the certificates at the specified round.
-    pub fn at_round(&self, round: Round) -> StoreResult<Vec<Certificate>> {
-        // Restrict the scan to at or after the requested round.
-        let iter = self.certificate_id_by_round.iter_with_bounds(
-            Some((round, AuthorityIdentifier(0))),
-            Some((round + 1, AuthorityIdentifier(0))),
-        );
-        let mut digests = Vec::new();
-        for ((r, _), d) in iter {
-            match r.cmp(&round) {
-                Ordering::Greater => {
-                    unreachable!("Failed to specify end range. Round {}", round);
-                }
-                Ordering::Equal => {
-                    digests.push(d);
-                }
-                Ordering::Less => {
-                    unreachable!("Failed to specify start range. Round {}", round);
-                }
+    /// Retrieves the certificates of the last round and the round before that
+    pub fn last_two_rounds_certs(&self) -> StoreResult<Vec<Certificate>> {
+        // starting from the last element - hence the last round - move backwards until
+        // we find certificates of different round.
+        let certificates_reverse = self
+            .certificate_id_by_round
+            .unbounded_iter()
+            .skip_to_last()
+            .reverse();
+
+        let mut round = 0;
+        let mut certificates = Vec::new();
+
+        for (key, digest) in certificates_reverse {
+            let (certificate_round, _certificate_origin) = key;
+
+            // We treat zero as special value (round unset) in order to
+            // capture the last certificate's round.
+            // We are now in a round less than the previous so we want to
+            // stop consuming
+            if round == 0 {
+                round = certificate_round;
+            } else if certificate_round < round - 1 {
+                break;
             }
+
+            let certificate = self.certificates_by_id.get(&digest)?.ok_or_else(|| {
+                RocksDBError(format!(
+                    "Certificate with id {} not found in main storage although it should",
+                    digest
+                ))
+            })?;
+
+            certificates.push(certificate);
         }
 
-        // Fetch all those certificates from main storage, return an error if any one is missing.
-        self.certificates_by_id
-            .multi_get(digests.clone())?
-            .into_iter()
-            .map(|opt_cert| {
-                opt_cert.ok_or_else(|| {
-                    RocksDBError(format!(
-                        "Certificate with some digests not found, CertificateStore invariant violation: {:?}",
-                        digests
-                    ))
-                })
-            })
-            .collect()
+        Ok(certificates)
     }
 
     /// Retrieves the last certificate of the given origin.
@@ -795,23 +797,28 @@ mod test {
     fn certificates(rounds: u64) -> Vec<Certificate> {
         let fixture = CommitteeFixture::builder().build();
         let committee = fixture.committee();
-        let mut current_round: Vec<_> = Certificate::genesis(&committee)
-            .into_iter()
-            .map(|cert| cert.header().clone())
-            .collect();
+        let mut current_round: Vec<_> =
+            Certificate::genesis(&latest_protocol_version(), &committee)
+                .into_iter()
+                .map(|cert| cert.header().clone())
+                .collect();
 
         let mut result: Vec<Certificate> = Vec::new();
         for i in 0..rounds {
             let parents: BTreeSet<_> = current_round
                 .iter()
-                .map(|header| fixture.certificate(header).digest())
+                .map(|header| {
+                    fixture
+                        .certificate(&latest_protocol_version(), header)
+                        .digest()
+                })
                 .collect();
             (_, current_round) = fixture.headers_round(i, &parents, &latest_protocol_version());
 
             result.extend(
                 current_round
                     .iter()
-                    .map(|h| fixture.certificate(h))
+                    .map(|h| fixture.certificate(&latest_protocol_version(), h))
                     .collect::<Vec<Certificate>>(),
             );
         }
@@ -927,7 +934,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_last_round() {
+    async fn test_last_two_rounds() {
         // GIVEN
         let store = new_store(temp_dir());
 
@@ -939,7 +946,7 @@ mod test {
         store.write_all(certs).unwrap();
 
         // WHEN
-        let result = store.at_round(50).unwrap();
+        let result = store.last_two_rounds_certs().unwrap();
         let last_round_cert = store.last_round(origin).unwrap().unwrap();
         let last_round_number = store.last_round_number(origin).unwrap().unwrap();
         let last_round_number_not_exist =
@@ -947,12 +954,15 @@ mod test {
         let highest_round_number = store.highest_round_number();
 
         // THEN
-        assert_eq!(result.len(), 4);
+        assert_eq!(result.len(), 8);
         assert_eq!(last_round_cert.round(), 50);
         assert_eq!(last_round_number, 50);
         assert_eq!(highest_round_number, 50);
         for certificate in result {
-            assert_eq!(certificate.round(), last_round_number);
+            assert!(
+                (certificate.round() == last_round_number)
+                    || (certificate.round() == last_round_number - 1)
+            );
         }
         assert!(last_round_number_not_exist.is_none());
     }
@@ -963,7 +973,7 @@ mod test {
         let store = new_store(temp_dir());
 
         // WHEN
-        let result = store.at_round(1).unwrap();
+        let result = store.last_two_rounds_certs().unwrap();
         let last_round_cert = store.last_round(AuthorityIdentifier::default()).unwrap();
         let last_round_number = store
             .last_round_number(AuthorityIdentifier::default())

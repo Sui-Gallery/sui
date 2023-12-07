@@ -4,9 +4,9 @@
 use futures::future;
 use jsonrpsee::core::client::{ClientT, Subscription, SubscriptionClientT};
 use jsonrpsee::rpc_params;
+use move_core_types::annotated_value::MoveStructLayout;
 use move_core_types::ident_str;
 use move_core_types::parser::parse_struct_tag;
-use move_core_types::value::MoveStructLayout;
 use rand::rngs::OsRng;
 use serde_json::json;
 use std::sync::Arc;
@@ -848,7 +848,6 @@ async fn test_full_node_transaction_orchestrator_basic() -> Result<(), anyhow::E
         QuorumDriverResponse {
             effects_cert: certified_txn_effects,
             events: txn_events,
-            ..
         },
     ) = rx.recv().await.unwrap().unwrap();
     let (cte, events, is_executed_locally) = *res;
@@ -877,7 +876,6 @@ async fn test_full_node_transaction_orchestrator_basic() -> Result<(), anyhow::E
         QuorumDriverResponse {
             effects_cert: certified_txn_effects,
             events: txn_events,
-            ..
         },
     ) = rx.recv().await.unwrap().unwrap();
     let (cte, events, is_executed_locally) = *res;
@@ -1156,6 +1154,7 @@ async fn test_full_node_bootstrap_from_snapshot() -> Result<(), anyhow::Error> {
         .with_enable_db_checkpoints_fullnodes()
         .build()
         .await;
+
     let checkpoint_path = test_cluster
         .fullnode_handle
         .sui_node
@@ -1272,10 +1271,8 @@ async fn test_pass_back_no_object() -> Result<(), anyhow::Error> {
         QuorumDriverResponse {
             effects_cert: _certified_txn_effects,
             events: _txn_events,
-            objects,
         },
     ) = rx.recv().await.unwrap().unwrap();
-    assert!(objects.is_empty(), "{objects:?}");
     Ok(())
 }
 

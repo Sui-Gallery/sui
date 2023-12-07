@@ -1,57 +1,42 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { PublicKey } from '@mysten/sui.js/cryptography';
+
 import { poseidonHash } from './poseidon.js';
 
-type bit = 0 | 1;
-
-const MAX_KEY_CLAIM_NAME_LENGTH = 40;
-// NOTE: The below param is in flux. It might change in the next few weeks.
-const MAX_KEY_CLAIM_VALUE_LENGTH = 200;
+const MAX_KEY_CLAIM_NAME_LENGTH = 32;
+const MAX_KEY_CLAIM_VALUE_LENGTH = 115;
+const MAX_AUD_VALUE_LENGTH = 145;
 const PACK_WIDTH = 248;
 
-// TODO: We need to rewrite this to not depend on Buffer.
-export function toBufferBE(num: bigint, width: number) {
-	const hex = num.toString(16);
-	return Buffer.from(hex.padStart(width * 2, '0').slice(-width * 2), 'hex');
-}
-
-function bigintArrayToBitArray(arr: bigint[], intSize: number): bit[] {
-	return arr.reduce((bitArray, n) => {
-		const binaryString = n.toString(2).padStart(intSize, '0');
-		const bitValues = binaryString.split('').map((bit) => (bit === '1' ? 1 : 0));
-		return [...bitArray, ...bitValues];
-	}, [] as bit[]);
-}
-
-function chunkArray<T>(arr: T[], chunkSize: number) {
-	return Array.from({ length: Math.ceil(arr.length / chunkSize) }, (_, i) =>
-		arr.slice(i * chunkSize, (i + 1) * chunkSize),
-	);
+export function getExtendedEphemeralPublicKey(publicKey: PublicKey) {
+	return publicKey.toSuiPublicKey();
 }
 
 /**
- * ConvertBase
- * 1. Converts each input element into exactly inWidth bits
- *     - Prefixing zeroes if needed
- * 2. Splits the resulting array into chunks of outWidth bits where
- *    the last chunk's size is <= outWidth bits.
- * 3. Converts each chunk into a bigint
- * 4. Returns a vector of size Math.ceil((inArr.length * inWidth) / outWidth)
+ * Splits an array into chunks of size chunk_size. If the array is not evenly
+ * divisible by chunk_size, the first chunk will be smaller than chunk_size.
+ *
+ * E.g., arrayChunk([1, 2, 3, 4, 5], 2) => [[1], [2, 3], [4, 5]]
+ *
+ * Note: Can be made more efficient by avoiding the reverse() calls.
  */
-export function convertBase(inArr: bigint[], inWidth: number, outWidth: number): bigint[] {
-	const bits = bigintArrayToBitArray(inArr, inWidth);
-	const packed = chunkArray(bits, outWidth).map((chunk) => BigInt('0b' + chunk.join('')));
-	return packed;
+export function chunkArray<T>(array: T[], chunk_size: number): T[][] {
+	const chunks = Array(Math.ceil(array.length / chunk_size));
+	const revArray = array.reverse();
+	for (let i = 0; i < chunks.length; i++) {
+		chunks[i] = revArray.slice(i * chunk_size, (i + 1) * chunk_size).reverse();
+	}
+	return chunks.reverse();
 }
 
-// hashes a stream of bigints to a field element
-export function hashToField(input: bigint[], inWidth: number) {
-	if (PACK_WIDTH % 8 !== 0) {
-		throw new Error('PACK_WIDTH must be a multiple of 8');
+function bytesBEToBigInt(bytes: number[]): bigint {
+	const hex = bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
+	if (hex.length === 0) {
+		return BigInt(0);
 	}
-	const packed = convertBase(input, inWidth, PACK_WIDTH);
-	return poseidonHash(packed);
+	return BigInt('0x' + hex);
 }
 
 // hashes an ASCII string to a field element
@@ -65,15 +50,26 @@ export function hashASCIIStrToField(str: string, maxSize: number) {
 	const strPadded = str
 		.padEnd(maxSize, String.fromCharCode(0))
 		.split('')
-		.map((c) => BigInt(c.charCodeAt(0)));
+		.map((c) => c.charCodeAt(0));
 
-	return hashToField(strPadded, 8);
+	const chunkSize = PACK_WIDTH / 8;
+	const packed = chunkArray(strPadded, chunkSize).map((chunk) => bytesBEToBigInt(chunk));
+	return poseidonHash(packed);
 }
 
-export function genAddressSeed(pin: bigint, name: string, value: string) {
+export function genAddressSeed(
+	salt: string | bigint,
+	name: string,
+	value: string,
+	aud: string,
+	max_name_length = MAX_KEY_CLAIM_NAME_LENGTH,
+	max_value_length = MAX_KEY_CLAIM_VALUE_LENGTH,
+	max_aud_length = MAX_AUD_VALUE_LENGTH,
+): bigint {
 	return poseidonHash([
-		hashASCIIStrToField(name, MAX_KEY_CLAIM_NAME_LENGTH),
-		hashASCIIStrToField(value, MAX_KEY_CLAIM_VALUE_LENGTH),
-		poseidonHash([pin]),
+		hashASCIIStrToField(name, max_name_length),
+		hashASCIIStrToField(value, max_value_length),
+		hashASCIIStrToField(aud, max_aud_length),
+		poseidonHash([BigInt(salt)]),
 	]);
 }
