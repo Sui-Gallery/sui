@@ -193,6 +193,40 @@ class ExtendedKioskTransactions extends KioskTransaction {
 		return this;
 	}
 
+	async acceptBidOnMarket({ type, item, price, source }) {
+		this.validateKioskIsSet();
+		const txb = this.transactionBlock;
+
+		// const policy = await this.getPolicy({ type: type });
+		// const policyObject = await this.kioskClient.client.getObject({ id: policy.id });
+
+		// const mkt_cap =
+		txb.moveCall({
+			target: `${this.MARKETPLACE_ADAPTER}::marketplace_adapter::new`,
+			typeArguments: [type, this.MARKET_TYPE],
+			arguments: [
+				objArg(txb, this.kiosk), //kiosk
+				objArg(txb, this.kioskCap), //cap
+				txb.pure.address(item), //item
+				txb.pure.u64(price), //min_price
+			],
+		});
+
+		// txb.moveCall({
+		// 	target: `${this.MARKETPLACE_ADAPTER}::collection_bidding_ext::accept_market_bid`,
+		// 	typeArguments: [type, this.MARKET_TYPE],
+		// 	arguments: [
+		// 		objArg(txb, this.kiosk), //dest kiosk
+		// 		objArg(txb, source), //source kiosk
+		// 		mkt_cap, //mkt_cap
+		// 		objArg(txb, policyObject.data), //transfer_policy
+		// 		txb.pure.bool(false), //lock
+		// 	],
+		// });
+
+		return this;
+	}
+
 	validateKioskIsSet() {
 		if (!this.kiosk || !this.kioskCap) {
 			throw new Error(
