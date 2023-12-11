@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 const { KioskTransaction, objArg, getNormalizedRuleType } = require('@mysten/kiosk');
 
 class ExtendedKioskTransactions extends KioskTransaction {
@@ -193,15 +196,11 @@ class ExtendedKioskTransactions extends KioskTransaction {
 		return this;
 	}
 
-	async acceptBidOnMarket({ type, item, price, source }) {
+	async acceptBidOnMarket({ type, item, price, buyer }) {
 		this.validateKioskIsSet();
 		const txb = this.transactionBlock;
 
-		// const policy = await this.getPolicy({ type: type });
-		// const policyObject = await this.kioskClient.client.getObject({ id: policy.id });
-
-		// const mkt_cap =
-		txb.moveCall({
+		const mkt_cap = txb.moveCall({
 			target: `${this.MARKETPLACE_ADAPTER}::marketplace_adapter::new`,
 			typeArguments: [type, this.MARKET_TYPE],
 			arguments: [
@@ -212,17 +211,47 @@ class ExtendedKioskTransactions extends KioskTransaction {
 			],
 		});
 
-		// txb.moveCall({
-		// 	target: `${this.MARKETPLACE_ADAPTER}::collection_bidding_ext::accept_market_bid`,
-		// 	typeArguments: [type, this.MARKET_TYPE],
-		// 	arguments: [
-		// 		objArg(txb, this.kiosk), //dest kiosk
-		// 		objArg(txb, source), //source kiosk
-		// 		mkt_cap, //mkt_cap
-		// 		objArg(txb, policyObject.data), //transfer_policy
-		// 		txb.pure.bool(false), //lock
-		// 	],
+		const policy = await this.getPolicy({ type: type });
+		const policyObject = await this.kioskClient.client.getObject({ id: policy.id });
+		const buyerKiosk = await this.kioskClient.client.getObject({
+			id: buyer,
+		});
+
+		const [collectionTransferRequest, marketTransferRequest] = txb.moveCall({
+			target: `${this.MARKETPLACE_ADAPTER}::collection_bidding_ext::accept_market_bid`,
+			typeArguments: [type, this.MARKET_TYPE],
+			arguments: [
+				objArg(txb, buyerKiosk.data), //buyer kiosk
+				objArg(txb, this.kiosk), //seller kiosk
+				mkt_cap, //mkt_cap
+				objArg(txb, policyObject.data), //transfer_policy
+				txb.pure.bool(false), //lock
+			],
+		});
+
+		// const collectionPolicy = await this.getPolicy({ type: type });
+		// const collectionPolicyObject = await this.kioskClient.client.getObject({
+		// 	id: collectionPolicy.id,
 		// });
+
+		// const marketPolicy = await this.getPolicy({ type: this.MARKET_TYPE });
+		// const marketPolicyObject = await this.kioskClient.client.getObject({
+		// 	id: marketPolicy.id,
+		// });
+
+		// txb.moveCall({
+		// 	target: `0x2::transfer_policy::confirm_request`,
+		// 	typeArguments: [type],
+		// 	arguments: [objArg(txb, collectionPolicy.id), objArg(txb, collectionTransferRequest)],
+		// });
+
+		// txb.moveCall({
+		// 	target: `0x2::transfer_policy::confirm_request`,
+		// 	typeArguments: [this.MARKET_TYPE],
+		// 	arguments: [objArg(txb, marketPolicy.id), objArg(txb, marketTransferRequest)],
+		// });
+
+		console.log(JSON.stringify(txb.blockData, null, 2));
 
 		return this;
 	}

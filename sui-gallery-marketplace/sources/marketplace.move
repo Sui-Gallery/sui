@@ -20,6 +20,7 @@ module gallery::marketplace {
 
     /// As easy as creating a Publisher; for simplicity's sake we also create
     /// the `MARKETPLACE` but this action can be performed offline in a PTB.
+    #[lint_allow(self_transfer)]
     fun init(otw: MARKETPLACE, ctx: &mut TxContext) {
         let publisher = sui::package::claim(otw, ctx);
         let (policy, policy_cap) = policy::new<Gallery>(&publisher, ctx);
