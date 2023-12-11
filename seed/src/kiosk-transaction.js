@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-const { KioskTransaction, objArg, getNormalizedRuleType } = require('@mysten/kiosk');
+const { KioskTransaction, getNormalizedRuleType } = require('@mysten/kiosk');
 
 class ExtendedKioskTransactions extends KioskTransaction {
 	constructor({ transactionBlock, kioskClient, cap }, { adapter, market_type, market }) {
@@ -18,8 +18,8 @@ class ExtendedKioskTransactions extends KioskTransaction {
 			target: `${this.MARKETPLACE_ADAPTER}::marketplace_trading_ext::list`,
 			typeArguments: [itemType, this.MARKET_TYPE],
 			arguments: [
-				objArg(txb, this.kiosk),
-				objArg(txb, this.kioskCap),
+				txb.object(this.kiosk),
+				txb.object(this.kioskCap),
 				txb.pure.address(item),
 				txb.pure.u64(price),
 			],
@@ -35,7 +35,7 @@ class ExtendedKioskTransactions extends KioskTransaction {
 		txb.moveCall({
 			target: `${this.MARKETPLACE_ADAPTER}::marketplace_trading_ext::delist`,
 			typeArguments: [itemType, this.MARKET_TYPE],
-			arguments: [objArg(txb, this.kiosk), objArg(txb, this.kioskCap), txb.pure.address(item)],
+			arguments: [txb.object(this.kiosk), txb.object(this.kioskCap), txb.pure.address(item)],
 		});
 		return this;
 	}
@@ -50,7 +50,7 @@ class ExtendedKioskTransactions extends KioskTransaction {
 		const [item, collectionTransferRequest, marketTransferRequest] = txb.moveCall({
 			target: `${this.MARKETPLACE_ADAPTER}::marketplace_trading_ext::purchase`,
 			typeArguments: [itemType, this.MARKET_TYPE],
-			arguments: [objArg(txb, sellerKiosk), txb.pure(itemId), coin],
+			arguments: [txb.object(sellerKiosk), txb.pure(itemId), coin],
 		});
 
 		return [item, collectionTransferRequest, marketTransferRequest];
@@ -60,7 +60,7 @@ class ExtendedKioskTransactions extends KioskTransaction {
 		tx.moveCall({
 			target: `0x2::transfer_policy::confirm_request`,
 			typeArguments: [itemType],
-			arguments: [objArg(tx, policy), request],
+			arguments: [tx.object(policy), request],
 		});
 	}
 
@@ -162,7 +162,7 @@ class ExtendedKioskTransactions extends KioskTransaction {
 		const txb = this.transactionBlock;
 		txb.moveCall({
 			target: `${this.MARKETPLACE_ADAPTER}::marketplace_trading_ext::add`,
-			arguments: [objArg(txb, this.kiosk), objArg(txb, this.kioskCap)],
+			arguments: [txb.object(this.kiosk), txb.object(this.kioskCap)],
 		});
 		return this;
 	}
@@ -172,7 +172,7 @@ class ExtendedKioskTransactions extends KioskTransaction {
 		const txb = this.transactionBlock;
 		txb.moveCall({
 			target: `${this.MARKETPLACE_ADAPTER}::collection_bidding_ext::add`,
-			arguments: [objArg(txb, this.kiosk), objArg(txb, this.kioskCap)],
+			arguments: [txb.object(this.kiosk), txb.object(this.kioskCap)],
 		});
 		return this;
 	}
@@ -190,7 +190,7 @@ class ExtendedKioskTransactions extends KioskTransaction {
 		txb.moveCall({
 			target: `${this.MARKETPLACE_ADAPTER}::collection_bidding_ext::place_bids`,
 			typeArguments: [type, this.MARKET_TYPE],
-			arguments: [objArg(txb, this.kiosk), objArg(txb, this.kioskCap), coins],
+			arguments: [txb.object(this.kiosk), txb.object(this.kioskCap), coins],
 		});
 
 		return this;
@@ -204,8 +204,8 @@ class ExtendedKioskTransactions extends KioskTransaction {
 			target: `${this.MARKETPLACE_ADAPTER}::marketplace_adapter::new`,
 			typeArguments: [type, this.MARKET_TYPE],
 			arguments: [
-				objArg(txb, this.kiosk), //kiosk
-				objArg(txb, this.kioskCap), //cap
+				txb.object(this.kiosk), //kiosk
+				txb.object(this.kioskCap), //cap
 				txb.pure.address(item), //item
 				txb.pure.u64(price), //min_price
 			],
@@ -221,10 +221,10 @@ class ExtendedKioskTransactions extends KioskTransaction {
 			target: `${this.MARKETPLACE_ADAPTER}::collection_bidding_ext::accept_market_bid`,
 			typeArguments: [type, this.MARKET_TYPE],
 			arguments: [
-				objArg(txb, buyerKiosk.data), //buyer kiosk
-				objArg(txb, this.kiosk), //seller kiosk
+				txb.object(buyer), //buyer kiosk
+				txb.object(this.kiosk), //seller kiosk
 				mkt_cap, //mkt_cap
-				objArg(txb, policyObject.data), //transfer_policy
+				txb.object(policy.id), //transfer_policy
 				txb.pure.bool(false), //lock
 			],
 		});
@@ -242,13 +242,13 @@ class ExtendedKioskTransactions extends KioskTransaction {
 		// txb.moveCall({
 		// 	target: `0x2::transfer_policy::confirm_request`,
 		// 	typeArguments: [type],
-		// 	arguments: [objArg(txb, collectionPolicy.id), objArg(txb, collectionTransferRequest)],
+		// 	arguments: [txb.object(collectionPolicy.id), txb.object(collectionTransferRequest)],
 		// });
 
 		// txb.moveCall({
 		// 	target: `0x2::transfer_policy::confirm_request`,
 		// 	typeArguments: [this.MARKET_TYPE],
-		// 	arguments: [objArg(txb, marketPolicy.id), objArg(txb, marketTransferRequest)],
+		// 	arguments: [txb.object(marketPolicy.id), txb.object(marketTransferRequest)],
 		// });
 
 		console.log(JSON.stringify(txb.blockData, null, 2));

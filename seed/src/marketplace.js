@@ -28,10 +28,10 @@ const DEFAULT_FAUCET_URL = getFaucetHost('localnet');
 const DEFAULT_FULLNODE_URL = getFullnodeUrl('localnet');
 const SUI_BIN = 'cargo run --bin sui';
 
-let MARKET = '0xb745900d9128f89a80250dc2b9ca0d851097fd847aa14b0927913fe18b356d69';
+let MARKET = '0x7155c5a803d41af9a11315adc421966df793e1d8053abbaaa9c877762886ff3a';
 let MARKET_TYPE =
-	'0xb745900d9128f89a80250dc2b9ca0d851097fd847aa14b0927913fe18b356d69::marketplace::Gallery';
-let MARKETPLACE_ADAPTER = '0x67055368313a9b5f0c89d82d92b67d7d44609817d7ba4e4a644009d02d8ea449';
+	'0x7155c5a803d41af9a11315adc421966df793e1d8053abbaaa9c877762886ff3a::marketplace::Gallery';
+let MARKETPLACE_ADAPTER = '0x3d4b03d4d756aa89a83112a824101dd4a2097161ddd637993f2e71cedcc8d500';
 
 class TestToolbox {
 	keypair;
