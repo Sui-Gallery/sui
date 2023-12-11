@@ -141,6 +141,8 @@ async function withKioskTransaction({ address }, actionCallback) {
 
 	txb.setGasBudget(1000000000);
 
+	console.log('creating kioskTx');
+
 	const kioskTx = new ExtendedKioskTransactions(
 		{
 			transactionBlock: txb,
@@ -237,13 +239,13 @@ async function acceptBidOnMarket({ address, type, price, item, buyer }) {
 		});
 
 		if (!owner.isKiosk) {
-			kioskTx.place({
+			await kioskTx.place({
 				itemType: type,
 				item: item,
 			});
 		}
 
-		kioskTx.acceptBidOnMarket({
+		await kioskTx.acceptBidOnMarket({
 			type: type,
 			item: item,
 			price: price,

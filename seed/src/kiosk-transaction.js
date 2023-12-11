@@ -212,10 +212,6 @@ class ExtendedKioskTransactions extends KioskTransaction {
 		});
 
 		const policy = await this.getPolicy({ type: type });
-		const policyObject = await this.kioskClient.client.getObject({ id: policy.id });
-		const buyerKiosk = await this.kioskClient.client.getObject({
-			id: buyer,
-		});
 
 		const [collectionTransferRequest, marketTransferRequest] = txb.moveCall({
 			target: `${this.MARKETPLACE_ADAPTER}::collection_bidding_ext::accept_market_bid`,
@@ -229,29 +225,20 @@ class ExtendedKioskTransactions extends KioskTransaction {
 			],
 		});
 
-		// const collectionPolicy = await this.getPolicy({ type: type });
-		// const collectionPolicyObject = await this.kioskClient.client.getObject({
-		// 	id: collectionPolicy.id,
-		// });
+		const collectionPolicy = await this.getPolicy({ type: type });
+		const marketPolicy = await this.getPolicy({ type: this.MARKET_TYPE });
 
-		// const marketPolicy = await this.getPolicy({ type: this.MARKET_TYPE });
-		// const marketPolicyObject = await this.kioskClient.client.getObject({
-		// 	id: marketPolicy.id,
-		// });
+		txb.moveCall({
+			target: `0x2::transfer_policy::confirm_request`,
+			typeArguments: [type],
+			arguments: [txb.object(collectionPolicy.id), txb.object(collectionTransferRequest)],
+		});
 
-		// txb.moveCall({
-		// 	target: `0x2::transfer_policy::confirm_request`,
-		// 	typeArguments: [type],
-		// 	arguments: [txb.object(collectionPolicy.id), txb.object(collectionTransferRequest)],
-		// });
-
-		// txb.moveCall({
-		// 	target: `0x2::transfer_policy::confirm_request`,
-		// 	typeArguments: [this.MARKET_TYPE],
-		// 	arguments: [txb.object(marketPolicy.id), txb.object(marketTransferRequest)],
-		// });
-
-		console.log(JSON.stringify(txb.blockData, null, 2));
+		txb.moveCall({
+			target: `0x2::transfer_policy::confirm_request`,
+			typeArguments: [this.MARKET_TYPE],
+			arguments: [txb.object(marketPolicy.id), txb.object(marketTransferRequest)],
+		});
 
 		return this;
 	}
