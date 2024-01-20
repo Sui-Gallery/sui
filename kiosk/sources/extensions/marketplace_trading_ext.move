@@ -52,6 +52,7 @@ module kiosk::marketplace_trading_ext {
     struct ItemPurchased<phantom T, phantom Market> has copy, drop {
         kiosk_id: ID,
         item_id: ID,
+        price: u64,
         kiosk_owner: Option<address>
     }
 
@@ -121,11 +122,13 @@ module kiosk::marketplace_trading_ext {
         assert!(is_listed<T, Market>(self, item_id), ENotListed);
 
         let mkt_cap = bag::remove(ext::storage_mut(Extension {}, self), item_id);
-        assert!(coin::value(&payment) == mkt::min_price(&mkt_cap), EIncorrectAmount);
+        let value = coin::value(&payment);
+        assert!(value == mkt::min_price(&mkt_cap), EIncorrectAmount);
 
         event::emit(ItemPurchased<T, Market> {
             kiosk_owner: personal_kiosk::try_owner(self),
             kiosk_id: object::id(self),
+            price: value,
             item_id
         });
 
