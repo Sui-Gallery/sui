@@ -24,7 +24,6 @@ module gallery::devnet_nft {
         description: string::String,
         /// URL for the token
         url: Url,
-        // TODO: allow custom attributes
         image_url: Url,
     }
 
@@ -60,14 +59,14 @@ module gallery::devnet_nft {
             name: string::utf8(name),
             description: string::utf8(description),
             url: url::new_unsafe_from_bytes(url),
-            image_url: url::new_unsafe_from_bytes(b"https://picsum.photos/seed/picsum/300/300")
+            image_url: url::new_unsafe_from_bytes(b"https://pbs.twimg.com/profile_images/1652004909091356672/B5S6JzVn_400x400.jpg")
         };
         let sender = tx_context::sender(ctx);
         event::emit(MintNFTEvent {
             object_id: object::uid_to_inner(&nft.id),
             creator: sender,
             name: nft.name,
-            image_url: url::new_unsafe_from_bytes(b"https://picsum.photos/seed/picsum/300/300")
+            image_url: url::new_unsafe_from_bytes(b"https://pbs.twimg.com/profile_images/1652004909091356672/B5S6JzVn_400x400.jpg")
         });
         transfer::public_transfer(nft, sender);
     }

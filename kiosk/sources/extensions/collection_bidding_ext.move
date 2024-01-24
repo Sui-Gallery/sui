@@ -121,6 +121,35 @@ module kiosk::collection_bidding_ext {
         bag::add(ext::storage_mut(Extension {}, self), Bid<T, Market> {}, bids);
     }
 
+    public fun place_bid<T: key + store, Market>(
+        self: &mut Kiosk, cap: &KioskOwnerCap, bids: vector<Coin<SUI>>, _ctx: &mut TxContext
+    ) {
+        assert!(vector::length(&bids) > 0, ENoCoinsPassed);
+        assert!(kiosk::has_access(self, cap), ENotAuthorized);
+        assert!(ext::is_installed<Extension>(self), EExtensionNotInstalled);
+
+        let amounts = vector[];
+        let (i, count) = (0, vector::length(&bids));
+        while (i < count) {
+            vector::push_back(&mut amounts, coin::value(vector::borrow(&bids, i)));
+            i = i + 1;
+        };
+
+        event::emit(NewBid<T, Market> {
+            kiosk_id: object::id(self),
+            bids: amounts,
+            is_personal: personal_kiosk::is_personal(self)
+        });
+
+        if (bag::contains(ext::storage_mut(Extension {}, self), Bid<T, Market> {})) {
+            let old_coins = bag::remove(ext::storage_mut(Extension {}, self), Bid<T, Market> {});
+            vector::append(&mut old_coins, bids);
+            bag::add(ext::storage_mut(Extension {}, self), Bid<T, Market> {}, old_coins);
+        } else {
+            bag::add(ext::storage_mut(Extension {}, self), Bid<T, Market> {}, bids);
+        }
+    }
+
     /// Cancel all bids, return the funds to the owner.
     public fun cancel_all<T: key + store, Market>(
         self: &mut Kiosk, cap: &KioskOwnerCap, ctx: &mut TxContext
@@ -136,6 +165,43 @@ module kiosk::collection_bidding_ext {
         let coins = bag::remove(ext::storage_mut(Extension {}, self), Bid<T, Market> {});
         let total = coin::zero(ctx);
         pay::join_vec(&mut total, coins);
+        total
+    }
+
+    /// Cancel spesific bids by price and count, return the funds to the owner.
+    public fun cancel_all_by_price<T: key + store, Market>(
+        self: &mut Kiosk, cap: &KioskOwnerCap, price: u64, count: u64, ctx: &mut TxContext
+    ): Coin<SUI> {
+        assert!(ext::is_installed<Extension>(self), EExtensionNotInstalled);
+        assert!(kiosk::has_access(self, cap), ENotAuthorized);
+
+        event::emit(BidCanceled<T, Market> {
+            kiosk_id: object::id(self),
+            kiosk_owner: personal_kiosk::try_owner(self)
+        });
+
+        let coins = bag::remove(ext::storage_mut(Extension {}, self), Bid<T, Market> {});
+        let i = 0;
+        let length = vector::length(&coins);
+        let total = coin::zero(ctx);
+        let remove = vector::empty<Coin<SUI>>();
+        let added = 0;
+        while (i < length) {
+            let coin = vector::pop_back(&mut coins);
+            let coin_value = coin::value(&coin);
+            if(coin_value == price && added < count) {
+                vector::insert(&mut remove, coin, 0);
+                added = added + 1;
+            } else{
+                vector::insert(&mut coins, coin, 0);
+            };
+
+            i = i + 1;
+        };
+
+        bag::add(ext::storage_mut(Extension {}, self), Bid<T, Market> {}, coins);
+
+        pay::join_vec(&mut total, remove);
         total
     }
 
@@ -217,8 +283,12 @@ module kiosk::collection_bidding_ext {
 
     /// Number of bids on an item of type `T` on a `Market` in a `Kiosk`.
     public fun bid_count<T: key + store, Market>(self: &Kiosk): u64 {
-        let coins = bag::borrow(ext::storage(Extension {}, self), Bid<T, Market> {});
-        vector::length<Coin<SUI>>(coins)
+        if(bag::contains(ext::storage(Extension {}, self), Bid<T, Market> {})) {
+            let coins = bag::borrow(ext::storage(Extension {}, self), Bid<T, Market> {});
+            vector::length<Coin<SUI>>(coins)
+        } else {
+            0
+        }
     }
 
     /// Returns the amount of the bid on an item of type `T` on a `Market`.

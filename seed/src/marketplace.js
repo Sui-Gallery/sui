@@ -14,6 +14,8 @@ const { retry } = require('ts-retry-promise');
 const { KioskClient, Network } = require('@mysten/kiosk');
 const { getFullnodeUrl, SuiClient } = require('@mysten/sui.js/client');
 const { ExtendedKioskTransactions } = require('./kiosk-transaction');
+const dotenv = require('dotenv');
+dotenv.config();
 
 const client = new SuiClient({
 	url: getFullnodeUrl('localnet'),
@@ -28,10 +30,9 @@ const DEFAULT_FAUCET_URL = getFaucetHost('localnet');
 const DEFAULT_FULLNODE_URL = getFullnodeUrl('localnet');
 const SUI_BIN = 'cargo run --bin sui';
 
-let MARKET = '0x7155c5a803d41af9a11315adc421966df793e1d8053abbaaa9c877762886ff3a';
-let MARKET_TYPE =
-	'0x7155c5a803d41af9a11315adc421966df793e1d8053abbaaa9c877762886ff3a::marketplace::Gallery';
-let MARKETPLACE_ADAPTER = '0x3d4b03d4d756aa89a83112a824101dd4a2097161ddd637993f2e71cedcc8d500';
+let MARKET = process.env.MARKET;
+let MARKET_TYPE = process.env.MARKET_TYPE;
+let MARKETPLACE_ADAPTER = process.env.MARKETPLACE_ADAPTER;
 
 class TestToolbox {
 	keypair;
@@ -141,8 +142,6 @@ async function withKioskTransaction({ address }, actionCallback) {
 
 	txb.setGasBudget(1000000000);
 
-	console.log('creating kioskTx');
-
 	const kioskTx = new ExtendedKioskTransactions(
 		{
 			transactionBlock: txb,
@@ -223,6 +222,22 @@ async function listOnMarket({ address, item, type, price }) {
 	});
 }
 
+async function delistAndListOnMarket({ address, item, type, price }) {
+	return await withKioskTransaction({ address }, async (txb, kioskTx, cap) => {
+		kioskTx
+			.delistOnMarket({
+				itemType: type,
+				item,
+				price,
+			})
+			.listOnMarket({
+				itemType: type,
+				item,
+				price,
+			});
+	});
+}
+
 async function bidOnMarket({ address, type, price }) {
 	return await withKioskTransaction({ address }, async (txb, kioskTx, cap) => {
 		kioskTx.placeBidOnMarket({
@@ -239,7 +254,7 @@ async function acceptBidOnMarket({ address, type, price, item, buyer }) {
 		});
 
 		if (!owner.isKiosk) {
-			await kioskTx.place({
+			kioskTx.place({
 				itemType: type,
 				item: item,
 			});
@@ -358,6 +373,18 @@ async function executeBuy({ sellerKiosk, address, item, type, price, toolbox }) 
 		});
 }
 
+async function executeDelistAndList({ sellerKiosk, address, item, type, price, toolbox }) {
+	const txb = await delistAndListOnMarket({ address, item, type, price });
+
+	await executeTransactionBlock(toolbox, txb)
+		.then((r) => {
+			console.log(`Delist is ${r.effects.status.status}`);
+		})
+		.catch((e) => {
+			console.log(e);
+		});
+}
+
 async function executeAddExtension({ toolbox }) {
 	const txb = await addTradingExtension(toolbox.address());
 
@@ -398,7 +425,6 @@ async function executeAcceptBid({ toolbox, address, buyer, type, price, item }) 
 
 	await executeTransactionBlock(toolbox, txb)
 		.then((r) => {
-			console.log(r);
 			console.log(`Accept bid is ${r.effects.status.status}`);
 		})
 		.catch((e) => {
@@ -461,18 +487,18 @@ async function run_scenario_1() {
 		price: Math.max(parseInt(1e10 * Math.random()), 1e8),
 	});
 
-	const toolbox2 = await setupSuiClient();
-	await executeAddExtension({ toolbox: toolbox2 });
+	// const toolbox2 = await setupSuiClient();
+	// await executeAddExtension({ toolbox: toolbox2 });
 
-	await executeBuy({
-		toolbox: toolbox2,
-		sellerKiosk: kioskId,
-		address: toolbox2.address(),
-		item: nftId,
-		type: `${MARKET}::devnet_nft::DevNetNFT`,
-		price: price,
-	});
-	console.log('------------------------------');
+	// await executeBuy({
+	// 	toolbox: toolbox2,
+	// 	sellerKiosk: kioskId,
+	// 	address: toolbox2.address(),
+	// 	item: nftId,
+	// 	type: `${MARKET}::devnet_nft::DevNetNFT`,
+	// 	price: price,
+	// });
+	// console.log('------------------------------');
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -489,18 +515,11 @@ async function run_scenario_2() {
 		type: `${MARKET}::devnet_nft::DevNetNFT`,
 		price: price,
 	});
-	await executeDelist({
+	await executeDelistAndList({
 		toolbox,
 		address: toolbox.address(),
 		item: nftId,
 		type: `${MARKET}::devnet_nft::DevNetNFT`,
-	});
-	await executeList({
-		toolbox,
-		address: toolbox.address(),
-		item: nftId,
-		type: `${MARKET}::devnet_nft::DevNetNFT`,
-		price: price,
 	});
 	console.log('------------------------------');
 }
@@ -536,11 +555,11 @@ async function run_scenario_3() {
 }
 
 async function repeat() {
-	// while (true) {
-	// await run_scenario_1()
-	// await run_scenario_2()
-	await run_scenario_3();
-	// }
+	while (true) {
+		await run_scenario_1();
+		// await run_scenario_2();
+		// await run_scenario_3();
+	}
 }
 
 async function main() {
