@@ -153,46 +153,6 @@ module kiosk::collection_bidding_tests {
     }
 
     #[test]
-    fun test_cancel_all_bids() {
-        let ctx = &mut test::ctx();
-        let (buyer_kiosk, buyer_cap) = test::get_kiosk(ctx);
-
-        // install extension
-        bidding::add(&mut buyer_kiosk, &buyer_cap, ctx);
-
-        // place bids on an Asset: 100 MIST
-        bidding::place_bid<Asset, MyMarket>(
-            &mut buyer_kiosk,
-            &buyer_cap,
-            vector[ test::get_sui(100, ctx) ],
-            ctx
-        );
-
-        bidding::place_bid<Asset, MyMarket>(
-            &mut buyer_kiosk,
-            &buyer_cap,
-            vector[ test::get_sui(1100, ctx) ],
-            ctx
-        );
-
-        assert!(bidding::bid_count<Asset, MyMarket>(&buyer_kiosk) == 2, 1);
-
-        let coins = bidding::cancel_all<Asset, MyMarket>(&mut buyer_kiosk, &buyer_cap, ctx);
-
-        assert!(bidding::bid_count<Asset, MyMarket>(&buyer_kiosk) == 0, 2);
-        assert!(coin::value(&coins) == 1200, 3);
-
-        bidding::place_bid<Asset, MyMarket>(
-            &mut buyer_kiosk,
-            &buyer_cap,
-            vector[ coins ],
-            ctx
-        );
-
-        test::return_kiosk(buyer_kiosk, buyer_cap, ctx);
-    }
-
-        #[test]
     fun test_cancel_all_bids_by_price() {
         let ctx = &mut test::ctx();
         let (buyer_kiosk, buyer_cap) = test::get_kiosk(ctx);

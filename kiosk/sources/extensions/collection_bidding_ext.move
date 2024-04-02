@@ -76,6 +76,8 @@ module kiosk::collection_bidding_ext {
     struct BidCanceled<phantom T, phantom Market> has copy, drop {
         kiosk_id: ID,
         kiosk_owner: Option<address>,
+        price: u64,
+        count: u64,
     }
 
     // === Extension ===
@@ -150,24 +152,6 @@ module kiosk::collection_bidding_ext {
         }
     }
 
-    /// Cancel all bids, return the funds to the owner.
-    public fun cancel_all<T: key + store, Market>(
-        self: &mut Kiosk, cap: &KioskOwnerCap, ctx: &mut TxContext
-    ): Coin<SUI> {
-        assert!(ext::is_installed<Extension>(self), EExtensionNotInstalled);
-        assert!(kiosk::has_access(self, cap), ENotAuthorized);
-
-        event::emit(BidCanceled<T, Market> {
-            kiosk_id: object::id(self),
-            kiosk_owner: personal_kiosk::try_owner(self)
-        });
-
-        let coins = bag::remove(ext::storage_mut(Extension {}, self), Bid<T, Market> {});
-        let total = coin::zero(ctx);
-        pay::join_vec(&mut total, coins);
-        total
-    }
-
     /// Cancel spesific bids by price and count, return the funds to the owner.
     public fun cancel_all_by_price<T: key + store, Market>(
         self: &mut Kiosk, cap: &KioskOwnerCap, price: u64, count: u64, ctx: &mut TxContext
@@ -177,7 +161,9 @@ module kiosk::collection_bidding_ext {
 
         event::emit(BidCanceled<T, Market> {
             kiosk_id: object::id(self),
-            kiosk_owner: personal_kiosk::try_owner(self)
+            kiosk_owner: personal_kiosk::try_owner(self),
+            price,
+            count
         });
 
         let coins = bag::remove(ext::storage_mut(Extension {}, self), Bid<T, Market> {});

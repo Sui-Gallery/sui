@@ -247,6 +247,17 @@ async function bidOnMarket({ address, type, price }) {
 	});
 }
 
+async function revokeBidOnMarket({ address, type, price, count }) {
+	return await withKioskTransaction({ address }, async (txb, kioskTx, cap) => {
+		kioskTx.revokeBidOnMarket({
+			type: type,
+			price: price,
+			count: count,
+			address: address,
+		});
+	});
+}
+
 async function acceptBidOnMarket({ address, type, price, item, buyer }) {
 	return await withKioskTransaction({ address }, async (txb, kioskTx, cap) => {
 		const owner = await getOwner({
@@ -432,6 +443,18 @@ async function executeAcceptBid({ toolbox, address, buyer, type, price, item }) 
 		});
 }
 
+async function executeRevokeBid({ toolbox, address, type, price, count }) {
+	const txb = await revokeBidOnMarket({ address, type, price, count });
+
+	await executeTransactionBlock(toolbox, txb)
+		.then((r) => {
+			console.log(`Revoke bid is ${r.effects.status.status}`);
+		})
+		.catch((e) => {
+			console.log(e);
+		});
+}
+
 async function purchaseAndResolveOnMarket({ address, sellerKiosk, item, type, price }) {
 	return await withKioskTransaction({ address }, async (txb, kioskTx, cap) => {
 		await kioskTx.purchaseAndResolveOnMarket({
@@ -554,9 +577,49 @@ async function run_scenario_3() {
 	});
 }
 
+async function run_scenario_4() {
+	console.log('Running Scenario 2');
+	const sellerToolbox = await setupSuiClient();
+	await executeAddExtension({ toolbox: sellerToolbox });
+	const nftId = await executeMint({ toolbox: sellerToolbox });
+
+	const buyerToolbox = await setupSuiClient();
+	const buyerKiosk = await executeAddExtension({ toolbox: buyerToolbox });
+	const bidPrice = Math.max(parseInt(1e10 * Math.random()), 1e8);
+
+	await executePlaceBid({
+		toolbox: buyerToolbox,
+		address: buyerToolbox.address(),
+		type: `${MARKET}::devnet_nft::DevNetNFT`,
+		price: bidPrice,
+	});
+
+	await executePlaceBid({
+		toolbox: buyerToolbox,
+		address: buyerToolbox.address(),
+		type: `${MARKET}::devnet_nft::DevNetNFT`,
+		price: bidPrice,
+	});
+
+	await executePlaceBid({
+		toolbox: buyerToolbox,
+		address: buyerToolbox.address(),
+		type: `${MARKET}::devnet_nft::DevNetNFT`,
+		price: bidPrice,
+	});
+
+	await executeRevokeBid({
+		toolbox: buyerToolbox,
+		address: buyerToolbox.address(),
+		type: `${MARKET}::devnet_nft::DevNetNFT`,
+		price: bidPrice,
+		count: 2,
+	});
+}
+
 async function repeat() {
 	while (true) {
-		await run_scenario_1();
+		await run_scenario_4();
 		// await run_scenario_2();
 		// await run_scenario_3();
 	}

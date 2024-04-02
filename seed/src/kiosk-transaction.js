@@ -188,9 +188,33 @@ class ExtendedKioskTransactions extends KioskTransaction {
 		});
 
 		txb.moveCall({
-			target: `${this.MARKETPLACE_ADAPTER}::collection_bidding_ext::place_bids`,
+			target: `${this.MARKETPLACE_ADAPTER}::collection_bidding_ext::place_bid`,
 			typeArguments: [type, this.MARKET_TYPE],
 			arguments: [txb.object(this.kiosk), txb.object(this.kioskCap), coins],
+		});
+
+		return this;
+	}
+
+	revokeBidOnMarket({ type, price, count, address }) {
+		this.validateKioskIsSet();
+		const txb = this.transactionBlock;
+
+		const coin = txb.moveCall({
+			target: `${this.MARKETPLACE_ADAPTER}::collection_bidding_ext::cancel_all_by_price`,
+			typeArguments: [type, this.MARKET_TYPE],
+			arguments: [
+				txb.object(this.kiosk),
+				txb.object(this.kioskCap),
+				txb.pure.u64(price),
+				txb.pure.u64(count),
+			],
+		});
+
+		txb.moveCall({
+			target: `0x2::transfer::public_transfer`,
+			typeArguments: ['0x2::coin::Coin<0x2::sui::SUI>'],
+			arguments: [coin, txb.pure.address(address)],
 		});
 
 		return this;
