@@ -500,28 +500,28 @@ async function run_scenario_1() {
 		price: price,
 	});
 
-	const bidToolbox = await setupSuiClient();
-	await executeAddExtension({ toolbox: bidToolbox });
-
-	await executePlaceBid({
-		toolbox: bidToolbox,
-		address: bidToolbox.address(),
-		type: `${MARKET}::devnet_nft::DevNetNFT`,
-		price: Math.max(parseInt(1e10 * Math.random()), 1e8),
-	});
-
-	// const toolbox2 = await setupSuiClient();
-	// await executeAddExtension({ toolbox: toolbox2 });
-
-	// await executeBuy({
-	// 	toolbox: toolbox2,
-	// 	sellerKiosk: kioskId,
-	// 	address: toolbox2.address(),
-	// 	item: nftId,
+	// const bidToolbox = await setupSuiClient();
+	// await executeAddExtension({ toolbox: bidToolbox });
+	//
+	// await executePlaceBid({
+	// 	toolbox: bidToolbox,
+	// 	address: bidToolbox.address(),
 	// 	type: `${MARKET}::devnet_nft::DevNetNFT`,
-	// 	price: price,
+	// 	price: Math.max(parseInt(1e10 * Math.random()), 1e8),
 	// });
-	// console.log('------------------------------');
+
+	const toolbox2 = await setupSuiClient();
+	await executeAddExtension({ toolbox: toolbox2 });
+
+	await executeBuy({
+		toolbox: toolbox2,
+		sellerKiosk: kioskId,
+		address: toolbox2.address(),
+		item: nftId,
+		type: `${MARKET}::devnet_nft::DevNetNFT`,
+		price: price,
+	});
+	console.log('------------------------------');
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -538,11 +538,13 @@ async function run_scenario_2() {
 		type: `${MARKET}::devnet_nft::DevNetNFT`,
 		price: price,
 	});
+
 	await executeDelistAndList({
 		toolbox,
 		address: toolbox.address(),
 		item: nftId,
 		type: `${MARKET}::devnet_nft::DevNetNFT`,
+		price: price,
 	});
 	console.log('------------------------------');
 }
@@ -578,13 +580,8 @@ async function run_scenario_3() {
 }
 
 async function run_scenario_4() {
-	console.log('Running Scenario 2');
-	const sellerToolbox = await setupSuiClient();
-	await executeAddExtension({ toolbox: sellerToolbox });
-	const nftId = await executeMint({ toolbox: sellerToolbox });
-
+	console.log('Running Scenario 4');
 	const buyerToolbox = await setupSuiClient();
-	const buyerKiosk = await executeAddExtension({ toolbox: buyerToolbox });
 	const bidPrice = Math.max(parseInt(1e10 * Math.random()), 1e8);
 
 	await executePlaceBid({
@@ -619,9 +616,10 @@ async function run_scenario_4() {
 
 async function repeat() {
 	while (true) {
-		await run_scenario_4();
+		await run_scenario_1();
 		// await run_scenario_2();
 		// await run_scenario_3();
+		// await run_scenario_4();
 	}
 }
 
