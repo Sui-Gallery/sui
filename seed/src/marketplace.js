@@ -424,6 +424,7 @@ async function executePlaceBid({ toolbox, address, type, price }) {
 	const txb = await bidOnMarket({ address, type, price });
 	await executeTransactionBlock(toolbox, txb)
 		.then((r) => {
+			console.log(r)
 			console.log(`Place bid is ${r.effects.status.status}`);
 		})
 		.catch((e) => {
@@ -539,13 +540,13 @@ async function run_scenario_2() {
 		price: price,
 	});
 
-	await executeDelistAndList({
-		toolbox,
-		address: toolbox.address(),
-		item: nftId,
-		type: `${MARKET}::devnet_nft::DevNetNFT`,
-		price: price,
-	});
+	// await executeDelistAndList({
+	// 	toolbox,
+	// 	address: toolbox.address(),
+	// 	item: nftId,
+	// 	type: `${MARKET}::devnet_nft::DevNetNFT`,
+	// 	price: price,
+	// });
 	console.log('------------------------------');
 }
 
@@ -582,6 +583,7 @@ async function run_scenario_3() {
 async function run_scenario_4() {
 	console.log('Running Scenario 4');
 	const buyerToolbox = await setupSuiClient();
+	await executeAddExtension({ toolbox: buyerToolbox });
 	const bidPrice = Math.max(parseInt(1e10 * Math.random()), 1e8);
 
 	await executePlaceBid({
@@ -616,10 +618,10 @@ async function run_scenario_4() {
 
 async function repeat() {
 	while (true) {
-		await run_scenario_1();
+		// await run_scenario_1();
 		// await run_scenario_2();
 		// await run_scenario_3();
-		// await run_scenario_4();
+		await run_scenario_4();
 	}
 }
 
