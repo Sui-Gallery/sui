@@ -18,7 +18,7 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const client = new SuiClient({
-	url: getFullnodeUrl('localnet'),
+	url: getFullnodeUrl('testnet'),
 });
 
 const kioskClient = new KioskClient({
@@ -26,8 +26,8 @@ const kioskClient = new KioskClient({
 	network: Network.CUSTOM,
 });
 
-const DEFAULT_FAUCET_URL = getFaucetHost('localnet');
-const DEFAULT_FULLNODE_URL = getFullnodeUrl('localnet');
+const DEFAULT_FAUCET_URL = getFaucetHost('testnet');
+const DEFAULT_FULLNODE_URL = getFullnodeUrl('testnet');
 const SUI_BIN = 'cargo run --bin sui';
 
 let MARKET = process.env.MARKET;
@@ -619,9 +619,10 @@ async function run_scenario_4() {
 
 async function repeat() {
 	while (true) {
+		await run_scenario_1();
+		await run_scenario_2();
+		await run_scenario_3();
 		await run_scenario_4();
-		// await run_scenario_2();
-		// await run_scenario_3();
 	}
 }
 
