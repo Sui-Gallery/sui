@@ -10,6 +10,7 @@
 /// - purchase
 module kiosk::marketplace_trading_ext {
     use std::option::Option;
+    use kiosk::marketplace_adapter;
 
     use sui::kiosk::{Self, Kiosk, KioskOwnerCap};
     use sui::transfer_policy::TransferRequest;
@@ -51,6 +52,7 @@ module kiosk::marketplace_trading_ext {
     /// An item has been purchased from a Marketplace.
     struct ItemPurchased<phantom T, phantom Market> has copy, drop {
         kiosk_id: ID,
+        seller_kiosk_id: ID,
         item_id: ID,
         price: u64,
         kiosk_owner: Option<address>
@@ -122,12 +124,14 @@ module kiosk::marketplace_trading_ext {
         assert!(is_listed<T, Market>(self, item_id), ENotListed);
 
         let mkt_cap = bag::remove(ext::storage_mut(Extension {}, self), item_id);
+        let seller_kiosk = marketplace_adapter::kiosk<T, Market>(&mkt_cap);
         let value = coin::value(&payment);
-        assert!(value == mkt::min_price(&mkt_cap), EIncorrectAmount);
+        assert!(value == mkt::min_price<T, Market>(&mkt_cap), EIncorrectAmount);
 
         event::emit(ItemPurchased<T, Market> {
             kiosk_owner: personal_kiosk::try_owner(self),
             kiosk_id: object::id(self),
+            seller_kiosk_id: seller_kiosk,
             price: value,
             item_id
         });
