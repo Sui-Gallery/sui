@@ -1,10 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    context_data::db_data_provider::PgManager,
-    types::{date_time::DateTime, epoch::Epoch},
-};
+use crate::types::{date_time::DateTime, epoch::Epoch};
 use async_graphql::*;
 use fastcrypto::encoding::{Base58, Encoding};
 use sui_types::{
@@ -27,14 +24,17 @@ pub(crate) struct ConsensusCommitPrologueTransaction {
     round: u64,
     commit_timestamp_ms: CheckpointTimestamp,
     consensus_commit_digest: Option<ConsensusCommitDigest>,
+    /// The checkpoint sequence number this was viewed at.
+    checkpoint_viewed_at: u64,
 }
 
+/// System transaction that runs at the beginning of a checkpoint, and is responsible for setting
+/// the current value of the clock, based on the timestamp from consensus.
 #[Object]
 impl ConsensusCommitPrologueTransaction {
     /// Epoch of the commit prologue transaction.
-    async fn epoch(&self, ctx: &Context<'_>) -> Result<Epoch> {
-        ctx.data_unchecked::<PgManager>()
-            .fetch_epoch_strict(self.epoch)
+    async fn epoch(&self, ctx: &Context<'_>) -> Result<Option<Epoch>> {
+        Epoch::query(ctx, Some(self.epoch), Some(self.checkpoint_viewed_at))
             .await
             .extend()
     }
@@ -45,8 +45,8 @@ impl ConsensusCommitPrologueTransaction {
     }
 
     /// Unix timestamp from consensus.
-    async fn commit_timestamp(&self) -> Option<DateTime> {
-        DateTime::from_ms(self.commit_timestamp_ms as i64)
+    async fn commit_timestamp(&self) -> Result<DateTime, Error> {
+        Ok(DateTime::from_ms(self.commit_timestamp_ms as i64)?)
     }
 
     /// Digest of consensus output, encoded as a Base58 string (only available from V2 of the
@@ -57,24 +57,30 @@ impl ConsensusCommitPrologueTransaction {
     }
 }
 
-impl From<NativeConsensusCommitPrologueTransactionV1> for ConsensusCommitPrologueTransaction {
-    fn from(ccp: NativeConsensusCommitPrologueTransactionV1) -> Self {
+impl ConsensusCommitPrologueTransaction {
+    pub(crate) fn from_v1(
+        ccp: NativeConsensusCommitPrologueTransactionV1,
+        checkpoint_viewed_at: u64,
+    ) -> Self {
         Self {
             epoch: ccp.epoch,
             round: ccp.round,
             commit_timestamp_ms: ccp.commit_timestamp_ms,
             consensus_commit_digest: None,
+            checkpoint_viewed_at,
         }
     }
-}
 
-impl From<NativeConsensusCommitPrologueTransactionV2> for ConsensusCommitPrologueTransaction {
-    fn from(ccp: NativeConsensusCommitPrologueTransactionV2) -> Self {
+    pub(crate) fn from_v2(
+        ccp: NativeConsensusCommitPrologueTransactionV2,
+        checkpoint_viewed_at: u64,
+    ) -> Self {
         Self {
             epoch: ccp.epoch,
             round: ccp.round,
             commit_timestamp_ms: ccp.commit_timestamp_ms,
             consensus_commit_digest: Some(ccp.consensus_commit_digest),
+            checkpoint_viewed_at,
         }
     }
 }

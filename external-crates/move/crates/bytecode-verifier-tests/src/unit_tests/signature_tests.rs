@@ -8,9 +8,9 @@ use move_binary_format::file_format::{
     Bytecode::*, CompiledModule, SignatureToken::*, Visibility::Public, *,
 };
 use move_bytecode_verifier::{
-    meter::DummyMeter, verify_module_unmetered, verify_module_with_config_for_test,
-    SignatureChecker,
+    verify_module_unmetered, verify_module_with_config_for_test, SignatureChecker,
 };
+use move_bytecode_verifier_meter::dummy::DummyMeter;
 use move_core_types::{
     account_address::AccountAddress, identifier::Identifier, vm_status::StatusCode,
 };
@@ -141,7 +141,7 @@ fn big_signature_test() {
     }
     for _ in 0..INSTANTIATION_DEPTH {
         let type_params = vec![st; N_TYPE_PARAMS];
-        st = SignatureToken::StructInstantiation(StructHandleIndex(0), type_params);
+        st = SignatureToken::StructInstantiation(Box::new((StructHandleIndex(0), type_params)));
     }
 
     const N_READPOP: u16 = 7500;
@@ -218,7 +218,7 @@ fn big_signature_test() {
 
     let res = verify_module_with_config_for_test(
         "big_signature_test",
-        &production_config(),
+        &production_config().0,
         &module,
         &mut DummyMeter,
     )

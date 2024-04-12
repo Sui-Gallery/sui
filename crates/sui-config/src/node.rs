@@ -1,8 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
-
 use crate::certificate_deny_config::CertificateDenyConfig;
 use crate::genesis;
+use crate::object_storage_config::ObjectStoreConfig;
 use crate::p2p::P2pConfig;
 use crate::transaction_deny_config::TransactionDenyConfig;
 use crate::Config;
@@ -21,12 +21,14 @@ use std::time::Duration;
 use std::usize;
 use sui_keys::keypair_file::{read_authority_keypair_from_file, read_keypair_from_file};
 use sui_protocol_config::{Chain, SupportedProtocolVersions};
-use sui_storage::object_store::ObjectStoreConfig;
 use sui_types::base_types::{ObjectID, SuiAddress};
+use sui_types::committee::EpochId;
 use sui_types::crypto::AuthorityPublicKeyBytes;
 use sui_types::crypto::KeypairTraits;
 use sui_types::crypto::NetworkKeyPair;
 use sui_types::crypto::SuiKeyPair;
+use sui_types::messages_checkpoint::CheckpointSequenceNumber;
+
 use sui_types::crypto::{get_key_pair_from_rng, AccountKeyPair, AuthorityKeyPair};
 use sui_types::multiaddr::Multiaddr;
 use tracing::info;
@@ -76,6 +78,10 @@ pub struct NodeConfig {
 
     #[serde(default = "default_enable_index_processing")]
     pub enable_index_processing: bool,
+
+    // only alow websocket connections for jsonrpc traffic
+    #[serde(default)]
+    pub websocket_only: bool,
 
     #[serde(default)]
     pub grpc_load_shed: Option<bool>,
@@ -160,8 +166,11 @@ pub struct NodeConfig {
     #[serde(default = "default_zklogin_oauth_providers")]
     pub zklogin_oauth_providers: BTreeMap<Chain, BTreeSet<String>>,
 
-    #[serde(default = "default_overload_threshold_config")]
-    pub overload_threshold_config: OverloadThresholdConfig,
+    #[serde(default = "default_authority_overload_config")]
+    pub authority_overload_config: AuthorityOverloadConfig,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_with_range: Option<RunWithRange>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
@@ -188,6 +197,7 @@ pub fn default_zklogin_oauth_providers() -> BTreeMap<Chain, BTreeSet<String>> {
         "Google".to_string(),
         "Facebook".to_string(),
         "Twitch".to_string(),
+        "Apple".to_string(),
     ]);
     map.insert(Chain::Mainnet, providers.clone());
     map.insert(Chain::Testnet, providers);
@@ -451,11 +461,6 @@ pub struct ExpensiveSafetyCheckConfig {
     #[serde(default)]
     force_disable_state_consistency_check: bool,
 
-    /// If enabled, we run the Move VM in paranoid mode, which provides protection
-    /// against some (but not all) potential bugs in the bytecode verifier
-    #[serde(default)]
-    enable_move_vm_paranoid_checks: bool,
-
     #[serde(default)]
     enable_secondary_index_checks: bool,
     // TODO: Add more expensive checks here
@@ -469,7 +474,6 @@ impl ExpensiveSafetyCheckConfig {
             force_disable_epoch_sui_conservation_check: false,
             enable_state_consistency_check: true,
             force_disable_state_consistency_check: false,
-            enable_move_vm_paranoid_checks: true,
             enable_secondary_index_checks: false, // Disable by default for now
         }
     }
@@ -481,13 +485,8 @@ impl ExpensiveSafetyCheckConfig {
             force_disable_epoch_sui_conservation_check: true,
             enable_state_consistency_check: false,
             force_disable_state_consistency_check: true,
-            enable_move_vm_paranoid_checks: false,
             enable_secondary_index_checks: false,
         }
-    }
-
-    pub fn enable_paranoid_checks(&mut self) {
-        self.enable_move_vm_paranoid_checks = true
     }
 
     pub fn force_disable_epoch_sui_conservation_check(&mut self) {
@@ -506,10 +505,6 @@ impl ExpensiveSafetyCheckConfig {
     pub fn enable_state_consistency_check(&self) -> bool {
         (self.enable_state_consistency_check || cfg!(debug_assertions))
             && !self.force_disable_state_consistency_check
-    }
-
-    pub fn enable_move_vm_paranoid_checks(&self) -> bool {
-        self.enable_move_vm_paranoid_checks
     }
 
     pub fn enable_deep_per_tx_sui_conservation_check(&self) -> bool {
@@ -574,6 +569,8 @@ pub struct AuthorityStorePruningConfig {
     /// disables object tombstone pruning. We don't serialize it if it is the default value, false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub killswitch_tombstone_pruning: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub smooth: bool,
 }
 
 fn default_num_latest_epoch_dbs_to_retain() -> usize {
@@ -604,6 +601,7 @@ impl Default for AuthorityStorePruningConfig {
             periodic_compaction_threshold_days: None,
             num_epochs_to_retain_for_checkpoints: if cfg!(msim) { Some(2) } else { None },
             killswitch_tombstone_pruning: false,
+            smooth: false,
         }
     }
 }
@@ -695,22 +693,101 @@ pub struct TransactionKeyValueStoreWriteConfig {
 /// stop processing new transactions and/or certificates until the congestion
 /// resolves.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct OverloadThresholdConfig {
+#[serde(rename_all = "kebab-case")]
+pub struct AuthorityOverloadConfig {
+    #[serde(default = "default_max_txn_age_in_queue")]
     pub max_txn_age_in_queue: Duration,
+
+    // The interval of checking overload signal.
+    #[serde(default = "default_overload_monitor_interval")]
+    pub overload_monitor_interval: Duration,
+
+    // The execution queueing latency when entering load shedding mode.
+    #[serde(default = "default_execution_queue_latency_soft_limit")]
+    pub execution_queue_latency_soft_limit: Duration,
+
+    // The execution queueing latency when entering aggressive load shedding mode.
+    #[serde(default = "default_execution_queue_latency_hard_limit")]
+    pub execution_queue_latency_hard_limit: Duration,
+
+    // The maximum percentage of transactions to shed in load shedding mode.
+    #[serde(default = "default_max_load_shedding_percentage")]
+    pub max_load_shedding_percentage: u32,
+
+    // When in aggressive load shedding mode, the minimum percentage of
+    // transactions to shed.
+    #[serde(default = "default_min_load_shedding_percentage_above_hard_limit")]
+    pub min_load_shedding_percentage_above_hard_limit: u32,
+
+    // If transaction ready rate is below this rate, we consider the validator
+    // is well under used, and will not enter load shedding mode.
+    #[serde(default = "default_safe_transaction_ready_rate")]
+    pub safe_transaction_ready_rate: u32,
+
+    // When set to true, transaction signing may be rejected when the validator
+    // is overloaded.
+    #[serde(default = "default_check_system_overload_at_signing")]
+    pub check_system_overload_at_signing: bool,
+
+    // When set to true, transaction execution may be rejected when the validator
+    // is overloaded.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub check_system_overload_at_execution: bool,
     // TODO: Move other thresholds here as well, including `MAX_TM_QUEUE_LENGTH`
     // and `MAX_PER_OBJECT_QUEUE_LENGTH`.
 }
 
-impl Default for OverloadThresholdConfig {
+fn default_max_txn_age_in_queue() -> Duration {
+    Duration::from_secs(1)
+}
+
+fn default_overload_monitor_interval() -> Duration {
+    Duration::from_secs(10)
+}
+
+fn default_execution_queue_latency_soft_limit() -> Duration {
+    Duration::from_secs(1)
+}
+
+fn default_execution_queue_latency_hard_limit() -> Duration {
+    Duration::from_secs(10)
+}
+
+fn default_max_load_shedding_percentage() -> u32 {
+    95
+}
+
+fn default_min_load_shedding_percentage_above_hard_limit() -> u32 {
+    50
+}
+
+fn default_safe_transaction_ready_rate() -> u32 {
+    100
+}
+
+fn default_check_system_overload_at_signing() -> bool {
+    true
+}
+
+impl Default for AuthorityOverloadConfig {
     fn default() -> Self {
         Self {
-            max_txn_age_in_queue: Duration::from_secs(1), // 1 second
+            max_txn_age_in_queue: default_max_txn_age_in_queue(),
+            overload_monitor_interval: default_overload_monitor_interval(),
+            execution_queue_latency_soft_limit: default_execution_queue_latency_soft_limit(),
+            execution_queue_latency_hard_limit: default_execution_queue_latency_hard_limit(),
+            max_load_shedding_percentage: default_max_load_shedding_percentage(),
+            min_load_shedding_percentage_above_hard_limit:
+                default_min_load_shedding_percentage_above_hard_limit(),
+            safe_transaction_ready_rate: default_safe_transaction_ready_rate(),
+            check_system_overload_at_signing: true,
+            check_system_overload_at_execution: false,
         }
     }
 }
 
-fn default_overload_threshold_config() -> OverloadThresholdConfig {
-    OverloadThresholdConfig::default()
+fn default_authority_overload_config() -> AuthorityOverloadConfig {
+    AuthorityOverloadConfig::default()
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq)]
@@ -964,5 +1041,24 @@ mod tests {
             template.worker_key_pair().public(),
             worker_key_pair.public()
         );
+    }
+}
+
+// RunWithRange is used to specify the ending epoch/checkpoint to process.
+// this is intended for use with disaster recovery debugging and verification workflows, never in normal operations
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub enum RunWithRange {
+    Epoch(EpochId),
+    Checkpoint(CheckpointSequenceNumber),
+}
+
+impl RunWithRange {
+    // is epoch_id > RunWithRange::Epoch
+    pub fn is_epoch_gt(&self, epoch_id: EpochId) -> bool {
+        matches!(self, RunWithRange::Epoch(e) if epoch_id > *e)
+    }
+
+    pub fn matches_checkpoint(&self, seq_num: CheckpointSequenceNumber) -> bool {
+        matches!(self, RunWithRange::Checkpoint(seq) if *seq == seq_num)
     }
 }

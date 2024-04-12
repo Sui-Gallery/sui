@@ -1,5 +1,117 @@
 # @mysten/create-dapp
 
+## 0.2.11
+
+### Patch Changes
+
+- @mysten/dapp-kit@0.12.9
+
+## 0.2.10
+
+### Patch Changes
+
+- Updated dependencies [b4ecdb5860]
+  - @mysten/sui.js@0.51.2
+  - @mysten/dapp-kit@0.12.8
+
+## 0.2.9
+
+### Patch Changes
+
+- Updated dependencies [6984dd1e38]
+  - @mysten/sui.js@0.51.1
+  - @mysten/dapp-kit@0.12.7
+
+## 0.2.8
+
+### Patch Changes
+
+- @mysten/dapp-kit@0.12.6
+
+## 0.2.7
+
+### Patch Changes
+
+- @mysten/dapp-kit@0.12.5
+
+## 0.2.6
+
+### Patch Changes
+
+- @mysten/dapp-kit@0.12.4
+
+## 0.2.5
+
+### Patch Changes
+
+- Updated dependencies [0cafa94027]
+  - @mysten/sui.js@0.51.0
+  - @mysten/dapp-kit@0.12.3
+
+## 0.2.4
+
+### Patch Changes
+
+- 4830361fa4: Updated typescript version
+- Updated dependencies [4830361fa4]
+  - @mysten/sui.js@0.50.1
+  - @mysten/dapp-kit@0.12.2
+
+## 0.2.3
+
+### Patch Changes
+
+- @mysten/dapp-kit@0.12.1
+
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [a34f1cb67d]
+- Updated dependencies [33c7325ee1]
+- Updated dependencies [c08e3569ef]
+- Updated dependencies [9a14e61db4]
+- Updated dependencies [13e922d9b1]
+- Updated dependencies [7b8d044603]
+- Updated dependencies [a34f1cb67d]
+- Updated dependencies [220a766d86]
+  - @mysten/sui.js@0.50.0
+  - @mysten/dapp-kit@0.12.0
+
+## 0.2.1
+
+### Patch Changes
+
+- 9ac0a4ec01: Add extensions to all sdk import paths
+- Updated dependencies [9ac0a4ec01]
+  - @mysten/sui.js@0.49.1
+  - @mysten/dapp-kit@0.11.1
+
+## 0.2.0
+
+### Minor Changes
+
+- e5f9e3ba21: Replace tsup based build to fix issues with esm/cjs dual publishing
+
+### Patch Changes
+
+- Updated dependencies [9ba167b0af]
+- Updated dependencies [e5f9e3ba21]
+  - @mysten/dapp-kit@0.11.0
+  - @mysten/sui.js@0.49.0
+
+## 0.1.8
+
+### Patch Changes
+
+- f8d44c25cc: Fix handling of paths on windows
+- dd362ec1d6: Update docs url to sdk.mystenlabs.com
+- Updated dependencies [165ad6b21d]
+- Updated dependencies [dd362ec1d6]
+- Updated dependencies [d55db38647]
+  - @mysten/dapp-kit@0.10.3
+  - @mysten/sui.js@0.48.1
+
 ## 0.1.7
 
 ### Patch Changes

@@ -4,18 +4,22 @@
 use async_graphql::*;
 use sui_types::effects::{IDOperation, ObjectChange as NativeObjectChange};
 
-use super::{object::Object, sui_address::SuiAddress};
-use crate::context_data::db_data_provider::PgManager;
+use super::{
+    object::{Object, ObjectLookupKey},
+    sui_address::SuiAddress,
+};
 
 pub(crate) struct ObjectChange {
     pub native: NativeObjectChange,
+    /// The checkpoint sequence number this was viewed at.
+    pub checkpoint_viewed_at: u64,
 }
 
 /// Effect on an individual Object (keyed by its ID).
 #[Object]
 impl ObjectChange {
     /// The address of the object that has changed.
-    async fn location(&self) -> SuiAddress {
+    async fn address(&self) -> SuiAddress {
         self.native.id.into()
     }
 
@@ -25,10 +29,16 @@ impl ObjectChange {
             return Ok(None);
         };
 
-        ctx.data_unchecked::<PgManager>()
-            .fetch_obj(self.native.id.into(), Some(version.value()))
-            .await
-            .extend()
+        Object::query(
+            ctx.data_unchecked(),
+            self.native.id.into(),
+            ObjectLookupKey::VersionAt {
+                version: version.value(),
+                checkpoint_viewed_at: Some(self.checkpoint_viewed_at),
+            },
+        )
+        .await
+        .extend()
     }
 
     /// The contents of the object immediately after the transaction.
@@ -37,10 +47,16 @@ impl ObjectChange {
             return Ok(None);
         };
 
-        ctx.data_unchecked::<PgManager>()
-            .fetch_obj(self.native.id.into(), Some(version.value()))
-            .await
-            .extend()
+        Object::query(
+            ctx.data_unchecked(),
+            self.native.id.into(),
+            ObjectLookupKey::VersionAt {
+                version: version.value(),
+                checkpoint_viewed_at: Some(self.checkpoint_viewed_at),
+            },
+        )
+        .await
+        .extend()
     }
 
     /// Whether the ID was created in this transaction.

@@ -11,6 +11,7 @@
 //! [`Simulacrum`]: crate::Simulacrum
 
 use std::num::NonZeroUsize;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use fastcrypto::traits::Signer;
@@ -23,9 +24,8 @@ use sui_swarm_config::network_config_builder::ConfigBuilder;
 use sui_types::base_types::{AuthorityName, ObjectID, VersionNumber};
 use sui_types::crypto::AuthoritySignature;
 use sui_types::digests::ConsensusCommitDigest;
-use sui_types::error::SuiError;
 use sui_types::object::Object;
-use sui_types::storage::ObjectStore;
+use sui_types::storage::{ObjectStore, ReadStore};
 use sui_types::sui_system_state::epoch_start_sui_system_state::EpochStartSystemState;
 use sui_types::transaction::EndOfEpochTransactionKind;
 use sui_types::{
@@ -45,7 +45,11 @@ pub use self::store::in_mem_store::InMemoryStore;
 use self::store::in_mem_store::KeyStore;
 pub use self::store::SimulatorStore;
 use sui_types::mock_checkpoint_builder::{MockCheckpointBuilder, ValidatorKeypairProvider};
-
+use sui_types::{
+    gas_coin::GasCoin,
+    programmable_transaction_builder::ProgrammableTransactionBuilder,
+    transaction::{GasData, TransactionData, TransactionKind},
+};
 mod epoch_state;
 pub mod store;
 
@@ -166,7 +170,7 @@ impl<R, S: store::SimulatorStore> Simulacrum<R, S> {
     ) -> anyhow::Result<(TransactionEffects, Option<ExecutionError>)> {
         let transaction = transaction.verify(&VerifyParams::default())?;
 
-        let (inner_temporary_store, effects, execution_error_opt) = self
+        let (inner_temporary_store, _, effects, execution_error_opt) = self
             .epoch_state
             .execute_transaction(&self.store, &self.deny_config, &transaction)?;
 
@@ -352,11 +356,7 @@ impl<R, S: store::SimulatorStore> Simulacrum<R, S> {
         let kind = sui_types::transaction::TransactionKind::ProgrammableTransaction(pt);
         let tx_data =
             sui_types::transaction::TransactionData::new_with_gas_data(kind, *sender, gas_data);
-        let tx = Transaction::from_data_and_signer(
-            tx_data,
-            shared_crypto::intent::Intent::sui_transaction(),
-            vec![key],
-        );
+        let tx = Transaction::from_data_and_signer(tx_data, vec![key]);
 
         self.execute_transaction(tx).map(|x| x.0)
     }
@@ -391,7 +391,10 @@ impl ValidatorKeypairProvider for CommitteeWithKeys<'_> {
 }
 
 impl<T, V: store::SimulatorStore> ObjectStore for Simulacrum<T, V> {
-    fn get_object(&self, object_id: &ObjectID) -> Result<Option<Object>, SuiError> {
+    fn get_object(
+        &self,
+        object_id: &ObjectID,
+    ) -> Result<Option<Object>, sui_types::storage::error::Error> {
         Ok(store::SimulatorStore::get_object(&self.store, object_id))
     }
 
@@ -399,8 +402,149 @@ impl<T, V: store::SimulatorStore> ObjectStore for Simulacrum<T, V> {
         &self,
         object_id: &ObjectID,
         version: VersionNumber,
-    ) -> Result<Option<Object>, SuiError> {
+    ) -> Result<Option<Object>, sui_types::storage::error::Error> {
         self.store.get_object_by_key(object_id, version)
+    }
+}
+
+impl<T, V: store::SimulatorStore> ReadStore for Simulacrum<T, V> {
+    fn get_committee(
+        &self,
+        _epoch: sui_types::committee::EpochId,
+    ) -> sui_types::storage::error::Result<Option<std::sync::Arc<Committee>>> {
+        todo!()
+    }
+
+    fn get_latest_checkpoint(&self) -> sui_types::storage::error::Result<VerifiedCheckpoint> {
+        Ok(self.store().get_highest_checkpint().unwrap())
+    }
+
+    fn get_highest_verified_checkpoint(
+        &self,
+    ) -> sui_types::storage::error::Result<VerifiedCheckpoint> {
+        todo!()
+    }
+
+    fn get_highest_synced_checkpoint(
+        &self,
+    ) -> sui_types::storage::error::Result<VerifiedCheckpoint> {
+        todo!()
+    }
+
+    fn get_lowest_available_checkpoint(
+        &self,
+    ) -> sui_types::storage::error::Result<sui_types::messages_checkpoint::CheckpointSequenceNumber>
+    {
+        // TODO wire this up to the underlying sim store, for now this will work since we never
+        // prune the sim store
+        Ok(0)
+    }
+
+    fn get_checkpoint_by_digest(
+        &self,
+        digest: &sui_types::messages_checkpoint::CheckpointDigest,
+    ) -> sui_types::storage::error::Result<Option<VerifiedCheckpoint>> {
+        Ok(self.store().get_checkpoint_by_digest(digest))
+    }
+
+    fn get_checkpoint_by_sequence_number(
+        &self,
+        sequence_number: sui_types::messages_checkpoint::CheckpointSequenceNumber,
+    ) -> sui_types::storage::error::Result<Option<VerifiedCheckpoint>> {
+        Ok(self
+            .store()
+            .get_checkpoint_by_sequence_number(sequence_number))
+    }
+
+    fn get_checkpoint_contents_by_digest(
+        &self,
+        digest: &sui_types::messages_checkpoint::CheckpointContentsDigest,
+    ) -> sui_types::storage::error::Result<Option<sui_types::messages_checkpoint::CheckpointContents>>
+    {
+        Ok(self.store().get_checkpoint_contents(digest))
+    }
+
+    fn get_checkpoint_contents_by_sequence_number(
+        &self,
+        _sequence_number: sui_types::messages_checkpoint::CheckpointSequenceNumber,
+    ) -> sui_types::storage::error::Result<Option<sui_types::messages_checkpoint::CheckpointContents>>
+    {
+        todo!()
+    }
+
+    fn get_transaction(
+        &self,
+        tx_digest: &sui_types::digests::TransactionDigest,
+    ) -> sui_types::storage::error::Result<Option<Arc<VerifiedTransaction>>> {
+        Ok(self.store().get_transaction(tx_digest).map(Arc::new))
+    }
+
+    fn get_transaction_effects(
+        &self,
+        tx_digest: &sui_types::digests::TransactionDigest,
+    ) -> sui_types::storage::error::Result<Option<TransactionEffects>> {
+        Ok(self.store().get_transaction_effects(tx_digest))
+    }
+
+    fn get_events(
+        &self,
+        event_digest: &sui_types::digests::TransactionEventsDigest,
+    ) -> sui_types::storage::error::Result<Option<sui_types::effects::TransactionEvents>> {
+        Ok(self.store().get_transaction_events(event_digest))
+    }
+
+    fn get_full_checkpoint_contents_by_sequence_number(
+        &self,
+        _sequence_number: sui_types::messages_checkpoint::CheckpointSequenceNumber,
+    ) -> sui_types::storage::error::Result<
+        Option<sui_types::messages_checkpoint::FullCheckpointContents>,
+    > {
+        todo!()
+    }
+
+    fn get_full_checkpoint_contents(
+        &self,
+        _digest: &sui_types::messages_checkpoint::CheckpointContentsDigest,
+    ) -> sui_types::storage::error::Result<
+        Option<sui_types::messages_checkpoint::FullCheckpointContents>,
+    > {
+        todo!()
+    }
+}
+
+impl Simulacrum {
+    /// Generate a random transfer transaction.
+    /// TODO: This is here today to make it easier to write tests. But we should utilize all the
+    /// existing code for generating transactions in sui-test-transaction-builder by defining a trait
+    /// that both WalletContext and Simulacrum implement. Then we can remove this function.
+    pub fn transfer_txn(&mut self, recipient: SuiAddress) -> (Transaction, u64) {
+        let (sender, key) = self.keystore().accounts().next().unwrap();
+        let sender = *sender;
+
+        let object = self
+            .store()
+            .owned_objects(sender)
+            .find(|object| object.is_gas_coin())
+            .unwrap();
+        let gas_coin = GasCoin::try_from(&object).unwrap();
+        let transfer_amount = gas_coin.value() / 2;
+
+        let pt = {
+            let mut builder = ProgrammableTransactionBuilder::new();
+            builder.transfer_sui(recipient, Some(transfer_amount));
+            builder.finish()
+        };
+
+        let kind = TransactionKind::ProgrammableTransaction(pt);
+        let gas_data = GasData {
+            payment: vec![object.compute_object_reference()],
+            owner: sender,
+            price: self.reference_gas_price(),
+            budget: 1_000_000_000,
+        };
+        let tx_data = TransactionData::new_with_gas_data(kind, sender, gas_data);
+        let tx = Transaction::from_data_and_signer(tx_data, vec![key]);
+        (tx, transfer_amount)
     }
 }
 
@@ -409,13 +553,9 @@ mod tests {
     use std::time::Duration;
 
     use rand::{rngs::StdRng, SeedableRng};
-    use shared_crypto::intent::Intent;
     use sui_types::{
-        base_types::SuiAddress,
-        effects::TransactionEffectsAPI,
-        gas_coin::GasCoin,
-        programmable_transaction_builder::ProgrammableTransactionBuilder,
-        transaction::{GasData, TransactionData, TransactionKind},
+        base_types::SuiAddress, effects::TransactionEffectsAPI, gas_coin::GasCoin,
+        transaction::TransactionDataAPI,
     };
 
     use super::*;
@@ -489,36 +629,10 @@ mod tests {
     #[test]
     fn transfer() {
         let mut sim = Simulacrum::new();
-        let recipient = SuiAddress::generate(sim.rng());
-        let (sender, key) = sim.keystore().accounts().next().unwrap();
-        let sender = *sender;
+        let recipient = SuiAddress::random_for_testing_only();
+        let (tx, transfer_amount) = sim.transfer_txn(recipient);
 
-        let object = sim
-            .store()
-            .owned_objects(sender)
-            .find(|object| object.is_gas_coin())
-            .unwrap();
-        let gas_coin = GasCoin::try_from(&object).unwrap();
-        let gas_id = object.id();
-        let transfer_amount = gas_coin.value() / 2;
-
-        gas_coin.value();
-        let pt = {
-            let mut builder = ProgrammableTransactionBuilder::new();
-            builder.transfer_sui(recipient, Some(transfer_amount));
-            builder.finish()
-        };
-
-        let kind = TransactionKind::ProgrammableTransaction(pt);
-        let gas_data = GasData {
-            payment: vec![object.compute_object_reference()],
-            owner: sender,
-            price: sim.reference_gas_price(),
-            budget: 1_000_000_000,
-        };
-        let tx_data = TransactionData::new_with_gas_data(kind, sender, gas_data);
-        let tx = Transaction::from_data_and_signer(tx_data, Intent::sui_transaction(), vec![key]);
-
+        let gas_id = tx.data().transaction_data().gas_data().payment[0].0;
         let effects = sim.execute_transaction(tx).unwrap().0;
         let gas_summary = effects.gas_cost_summary();
         let gas_paid = gas_summary.net_gas_usage();

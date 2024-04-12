@@ -23,12 +23,13 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use sui_config::object_storage_config::ObjectStoreConfig;
 use sui_core::authority::authority_store_tables::{AuthorityPerpetualTables, LiveObject};
 use sui_core::authority::AuthorityStore;
 use sui_storage::blob::{Blob, BlobEncoding};
 use sui_storage::object_store::http::HttpDownloaderBuilder;
 use sui_storage::object_store::util::{copy_file, copy_files, path_to_filesystem};
-use sui_storage::object_store::{ObjectStoreConfig, ObjectStoreGetExt, ObjectStorePutExt};
+use sui_storage::object_store::{ObjectStoreGetExt, ObjectStorePutExt};
 use sui_types::accumulator::Accumulator;
 use sui_types::base_types::{ObjectDigest, ObjectID, ObjectRef, SequenceNumber};
 use tokio::sync::Mutex;
@@ -195,6 +196,7 @@ impl StateSnapshotReaderV1 {
                 .unwrap(),
             ),
         );
+
         for (bucket, part_files) in self.ref_files.clone().iter() {
             for (part, _part_file) in part_files.iter() {
                 let mut sha3_digests = sha3_digests.lock().await;

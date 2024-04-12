@@ -3,13 +3,15 @@
 
 use crate::base_types::{SequenceNumber, VersionDigest};
 use crate::effects::{TransactionEffects, TransactionEffectsAPI, TransactionEvents};
+use crate::error::SuiResult;
 use crate::execution::DynamicallyLoadedObjectMetadata;
-use crate::storage::InputKey;
 use crate::storage::PackageObject;
+use crate::storage::{BackingPackageStore, InputKey};
 use crate::{
     base_types::ObjectID,
     object::{Object, Owner},
 };
+use move_binary_format::binary_config::BinaryConfig;
 use move_binary_format::CompiledModule;
 use move_bytecode_utils::module_cache::GetModule;
 use move_core_types::language_storage::ModuleId;
@@ -29,8 +31,7 @@ pub struct InnerTemporaryStore {
     pub written: WrittenObjects,
     pub loaded_runtime_objects: BTreeMap<ObjectID, DynamicallyLoadedObjectMetadata>,
     pub events: TransactionEvents,
-    pub max_binary_format_version: u32,
-    pub no_extraneous_module_bytes: bool,
+    pub binary_config: BinaryConfig,
     pub runtime_packages_loaded_from_db: BTreeMap<ObjectID, PackageObject>,
     pub lamport_version: SequenceNumber,
 }
@@ -115,11 +116,39 @@ where
             if let Some(p) = o.data.try_as_package() {
                 return Ok(Some(Arc::new(p.deserialize_module(
                     &id.name().into(),
-                    self.temp_store.max_binary_format_version,
-                    self.temp_store.no_extraneous_module_bytes,
+                    &self.temp_store.binary_config,
                 )?)));
             }
         }
         self.fallback.get_module_by_id(id)
+    }
+}
+
+pub struct TemporaryPackageStore<'a, R> {
+    temp_store: &'a InnerTemporaryStore,
+    fallback: R,
+}
+
+impl<'a, R> TemporaryPackageStore<'a, R> {
+    pub fn new(temp_store: &'a InnerTemporaryStore, fallback: R) -> Self {
+        Self {
+            temp_store,
+            fallback,
+        }
+    }
+}
+
+impl<R> BackingPackageStore for TemporaryPackageStore<'_, R>
+where
+    R: BackingPackageStore,
+{
+    fn get_package_object(&self, package_id: &ObjectID) -> SuiResult<Option<PackageObject>> {
+        // We first check the objects in the temporary store it is possible to read packages that are
+        // just written in the same transaction.
+        if let Some(obj) = self.temp_store.written.get(package_id) {
+            Ok(Some(PackageObject::new(obj.clone())))
+        } else {
+            self.fallback.get_package_object(package_id)
+        }
     }
 }

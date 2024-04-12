@@ -7,7 +7,6 @@ import { deobfuscate, obfuscate } from '_src/shared/cryptography/keystore';
 import { fromExportedKeypair } from '_src/shared/utils/from-exported-keypair';
 import {
 	toSerializedSignature,
-	type ExportedKeypair,
 	type PublicKey,
 	type SerializedSignature,
 } from '@mysten/sui.js/cryptography';
@@ -38,7 +37,7 @@ function serializeNetwork(network: NetworkEnvType): SerializedNetwork {
 }
 
 type CredentialData = {
-	ephemeralKeyPair: ExportedKeypair;
+	ephemeralKeyPair: string;
 	proofs?: PartialZkLoginSignature;
 	minEpoch: number;
 	maxEpoch: number;
@@ -223,6 +222,7 @@ export class ZkLoginAccount
 				BigInt(randomness),
 				maxEpoch,
 				keyPair.getPublicKey(),
+				activeNetwork,
 			);
 			credentialsData.proofs = proofs;
 			// store the proofs to avoid creating them again
@@ -278,7 +278,7 @@ export class ZkLoginAccount
 		const ephemeralValue = (await this.getEphemeralValue()) || {};
 		const activeNetwork = await networkEnv.getActiveNetwork();
 		const credentialsData: CredentialData = {
-			ephemeralKeyPair: ephemeralKeyPair.export(),
+			ephemeralKeyPair: ephemeralKeyPair.getSecretKey(),
 			minEpoch: Number(epoch),
 			maxEpoch,
 			network: activeNetwork,
@@ -296,6 +296,7 @@ export class ZkLoginAccount
 		randomness: bigint,
 		maxEpoch: number,
 		ephemeralPublicKey: PublicKey,
+		network: NetworkEnvType,
 	) {
 		const { salt: obfuscatedSalt, claimName } = await this.getStoredData();
 		const salt = await deobfuscate<string>(obfuscatedSalt);
@@ -306,6 +307,7 @@ export class ZkLoginAccount
 			jwtRandomness: randomness,
 			keyClaimName: claimName,
 			maxEpoch,
+			network,
 		});
 	}
 }

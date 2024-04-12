@@ -3,55 +3,64 @@
 
 use std::collections::BTreeMap;
 
+use tap::tap::TapFallible;
 use tokio::sync::watch;
 use tracing::instrument;
-
-use tap::tap::TapFallible;
 use tracing::{error, info};
 
+use sui_rest_api::Client;
 use sui_types::messages_checkpoint::CheckpointSequenceNumber;
 
 use crate::metrics::IndexerMetrics;
-
-use crate::store::IndexerStoreV2;
-use crate::types_v2::IndexerResult;
-use crate::IndexerConfig;
+use crate::store::IndexerStore;
+use crate::types::IndexerResult;
 
 use super::{CheckpointDataToCommit, EpochToCommit};
 
+const CHECKPOINT_COMMIT_BATCH_SIZE: usize = 100;
+const OBJECTS_SNAPSHOT_MAX_CHECKPOINT_LAG: u64 = 900;
+
 pub async fn start_tx_checkpoint_commit_task<S>(
     state: S,
+    client: Client,
     metrics: IndexerMetrics,
-    config: IndexerConfig,
     tx_indexing_receiver: mysten_metrics::metered_channel::Receiver<CheckpointDataToCommit>,
     commit_notifier: watch::Sender<Option<CheckpointSequenceNumber>>,
 ) where
-    S: IndexerStoreV2 + Clone + Sync + Send + 'static,
+    S: IndexerStore + Clone + Sync + Send + 'static,
 {
     use futures::StreamExt;
 
     info!("Indexer checkpoint commit task started...");
     let checkpoint_commit_batch_size = std::env::var("CHECKPOINT_COMMIT_BATCH_SIZE")
-        .unwrap_or(5.to_string())
+        .unwrap_or(CHECKPOINT_COMMIT_BATCH_SIZE.to_string())
         .parse::<usize>()
         .unwrap();
     info!("Using checkpoint commit batch size {checkpoint_commit_batch_size}");
 
     let mut stream = mysten_metrics::metered_channel::ReceiverStream::new(tx_indexing_receiver)
         .ready_chunks(checkpoint_commit_batch_size);
+    let mut object_snapshot_backfill_mode = true;
 
     while let Some(indexed_checkpoint_batch) = stream.next().await {
         if indexed_checkpoint_batch.is_empty() {
             continue;
         }
-        if config.skip_db_commit {
-            info!(
-                "[Checkpoint/Tx] Downloaded and indexed checkpoint {:?} - {:?} successfully, skipping DB commit...",
-                indexed_checkpoint_batch.first().map(|c| c.checkpoint.sequence_number),
-                indexed_checkpoint_batch.last().map(|c| c.checkpoint.sequence_number),
-            );
-            continue;
+
+        let mut latest_fn_cp_res = client.get_latest_checkpoint().await;
+        while latest_fn_cp_res.is_err() {
+            error!("Failed to get latest checkpoint from the network");
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            latest_fn_cp_res = client.get_latest_checkpoint().await;
         }
+        // unwrap is safe here because we checked that latest_fn_cp_res is Ok above
+        let latest_fn_cp = latest_fn_cp_res.unwrap().sequence_number;
+        // unwrap is safe b/c we checked for empty batch above
+        let latest_committed_cp = indexed_checkpoint_batch
+            .last()
+            .unwrap()
+            .checkpoint
+            .sequence_number;
 
         // split the batch into smaller batches per epoch to handle partitioning
         let mut indexed_checkpoint_batch_per_epoch = vec![];
@@ -65,6 +74,7 @@ pub async fn start_tx_checkpoint_commit_task<S>(
                     epoch,
                     &metrics,
                     &commit_notifier,
+                    object_snapshot_backfill_mode,
                 )
                 .await;
                 indexed_checkpoint_batch_per_epoch = vec![];
@@ -77,8 +87,14 @@ pub async fn start_tx_checkpoint_commit_task<S>(
                 None,
                 &metrics,
                 &commit_notifier,
+                object_snapshot_backfill_mode,
             )
             .await;
+        }
+        // this is a one-way flip in case indexer falls behind again, so that the objects snapshot
+        // table will not be populated by both committer and async snapshot processor at the same time.
+        if latest_committed_cp + OBJECTS_SNAPSHOT_MAX_CHECKPOINT_LAG > latest_fn_cp {
+            object_snapshot_backfill_mode = false;
         }
     }
 }
@@ -94,8 +110,9 @@ async fn commit_checkpoints<S>(
     epoch: Option<EpochToCommit>,
     metrics: &IndexerMetrics,
     commit_notifier: &watch::Sender<Option<CheckpointSequenceNumber>>,
+    object_snapshot_backfill_mode: bool,
 ) where
-    S: IndexerStoreV2 + Clone + Sync + Send + 'static,
+    S: IndexerStore + Clone + Sync + Send + 'static,
 {
     let mut checkpoint_batch = vec![];
     let mut tx_batch = vec![];
@@ -103,6 +120,7 @@ async fn commit_checkpoints<S>(
     let mut tx_indices_batch = vec![];
     let mut display_updates_batch = BTreeMap::new();
     let mut object_changes_batch = vec![];
+    let mut object_history_changes_batch = vec![];
     let mut packages_batch = vec![];
 
     for indexed_checkpoint in indexed_checkpoint_batch {
@@ -113,6 +131,7 @@ async fn commit_checkpoints<S>(
             tx_indices,
             display_updates,
             object_changes,
+            object_history_changes,
             packages,
             epoch: _,
         } = indexed_checkpoint;
@@ -122,6 +141,7 @@ async fn commit_checkpoints<S>(
         tx_indices_batch.push(tx_indices);
         display_updates_batch.extend(display_updates.into_iter());
         object_changes_batch.push(object_changes);
+        object_history_changes_batch.push(object_history_changes);
         packages_batch.push(packages);
     }
 
@@ -145,8 +165,11 @@ async fn commit_checkpoints<S>(
             state.persist_displays(display_updates_batch),
             state.persist_packages(packages_batch),
             state.persist_objects(object_changes_batch.clone()),
-            state.persist_object_history(object_changes_batch),
+            state.persist_object_history(object_history_changes_batch.clone()),
         ];
+        if object_snapshot_backfill_mode {
+            persist_tasks.push(state.backfill_objects_snapshot(object_changes_batch));
+        }
         if let Some(epoch_data) = epoch.clone() {
             persist_tasks.push(state.persist_epoch(epoch_data));
         }
@@ -163,18 +186,6 @@ async fn commit_checkpoints<S>(
             .expect("Persisting data into DB should not fail.");
     }
 
-    state
-        .persist_checkpoints(checkpoint_batch)
-        .await
-        .tap_err(|e| {
-            error!(
-                "Failed to persist checkpoint data with error: {}",
-                e.to_string()
-            );
-        })
-        .expect("Persisting data into DB should not fail.");
-    let elapsed = guard.stop_and_record();
-
     // handle partitioning on epoch boundary
     if let Some(epoch_data) = epoch {
         state
@@ -186,6 +197,18 @@ async fn commit_checkpoints<S>(
             .expect("Advancing epochs in DB should not fail.");
         metrics.total_epoch_committed.inc();
     }
+
+    state
+        .persist_checkpoints(checkpoint_batch)
+        .await
+        .tap_err(|e| {
+            error!(
+                "Failed to persist checkpoint data with error: {}",
+                e.to_string()
+            );
+        })
+        .expect("Persisting data into DB should not fail.");
+    let elapsed = guard.stop_and_record();
 
     commit_notifier
         .send(Some(last_checkpoint_seq))

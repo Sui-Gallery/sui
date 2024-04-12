@@ -4,9 +4,11 @@
 use crate::command_line::compiler::Visitor;
 use crate::diagnostics::WarningFilters;
 use crate::expansion::ast::ModuleIdent;
-use crate::parser::ast::FunctionName;
+use crate::parser::ast::{ConstantName, FunctionName};
 use crate::shared::{program_info::TypingProgramInfo, CompilationEnv};
 use crate::typing::ast as T;
+
+use move_proc_macros::growing_stack;
 
 pub type TypingVisitorObj = Box<dyn TypingVisitor>;
 
@@ -69,12 +71,40 @@ pub trait TypingVisitorContext {
                 continue;
             }
 
+            for (constant_name, cdef) in mdef.constants.key_cloned_iter_mut() {
+                self.visit_constant(mident, constant_name, cdef)
+            }
             for (function_name, fdef) in mdef.functions.key_cloned_iter_mut() {
                 self.visit_function(mident, function_name, fdef)
             }
 
             self.pop_warning_filter_scope();
         }
+    }
+
+    // TODO struct and type visiting
+
+    fn visit_constant_custom(
+        &mut self,
+        _module: ModuleIdent,
+        _constant_name: ConstantName,
+        _cdef: &mut T::Constant,
+    ) -> bool {
+        false
+    }
+    fn visit_constant(
+        &mut self,
+        module: ModuleIdent,
+        constant_name: ConstantName,
+        cdef: &mut T::Constant,
+    ) {
+        self.add_warning_filter_scope(cdef.warning_filter.clone());
+        if self.visit_constant_custom(module, constant_name, cdef) {
+            self.pop_warning_filter_scope();
+            return;
+        }
+        self.visit_exp(&mut cdef.value);
+        self.pop_warning_filter_scope();
     }
 
     fn visit_function_custom(
@@ -102,7 +132,7 @@ pub trait TypingVisitorContext {
         self.pop_warning_filter_scope();
     }
 
-    fn visit_seq(&mut self, seq: &mut T::Sequence) {
+    fn visit_seq(&mut self, (_, seq): &mut T::Sequence) {
         for s in seq {
             self.visit_seq_item(s);
         }
@@ -122,6 +152,7 @@ pub trait TypingVisitorContext {
         false
     }
 
+    #[growing_stack]
     fn visit_exp(&mut self, exp: &mut T::Exp) {
         use T::UnannotatedExp_ as E;
         if self.visit_exp_custom(exp) {
@@ -137,7 +168,22 @@ pub trait TypingVisitorContext {
                 self.visit_exp(e2);
                 self.visit_exp(e3);
             }
-            E::While(e1, _, e2) => {
+            E::Match(esubject, arms) => {
+                self.visit_exp(esubject);
+                for sp!(_, arm) in arms.value.iter_mut() {
+                    if let Some(guard) = arm.guard.as_mut() {
+                        self.visit_exp(guard)
+                    }
+                    self.visit_exp(&mut arm.rhs);
+                }
+            }
+            E::VariantMatch(esubject, _, arms) => {
+                self.visit_exp(esubject);
+                for (_, earm) in arms.iter_mut() {
+                    self.visit_exp(earm);
+                }
+            }
+            E::While(_, e1, e2) => {
                 self.visit_exp(e1);
                 self.visit_exp(e2);
             }
@@ -161,6 +207,9 @@ pub trait TypingVisitorContext {
             E::Pack(_, _, _, fields) => fields
                 .iter_mut()
                 .for_each(|(_, _, (_, (_, e)))| self.visit_exp(e)),
+            E::PackVariant(_, _, _, _, fields) => fields
+                .iter_mut()
+                .for_each(|(_, _, (_, (_, e)))| self.visit_exp(e)),
             E::ExpList(list) => {
                 for l in list {
                     match l {
@@ -181,7 +230,7 @@ pub trait TypingVisitorContext {
             | E::Constant(..)
             | E::Continue(_)
             | E::BorrowLocal(..)
-            | E::Spec(..)
+            | E::ErrorConstant(_)
             | E::UnresolvedError => (),
         }
     }

@@ -26,7 +26,10 @@ mod test {
     use sui_core::authority::AuthorityState;
     use sui_core::checkpoints::{CheckpointStore, CheckpointWatermark};
     use sui_framework::BuiltInFramework;
-    use sui_macros::{clear_fail_point, register_fail_point_async, register_fail_points, sim_test};
+    use sui_macros::{
+        clear_fail_point, nondeterministic, register_fail_point_async, register_fail_point_if,
+        register_fail_points, sim_test,
+    };
     use sui_protocol_config::{ProtocolVersion, SupportedProtocolVersions};
     use sui_simulator::tempfile::TempDir;
     use sui_simulator::{configs::*, SimConfig};
@@ -73,6 +76,18 @@ mod test {
     async fn test_simulated_load_with_reconfig() {
         sui_protocol_config::ProtocolConfig::poison_get_for_min_version();
         let test_cluster = build_test_cluster(4, 1000).await;
+        test_simulated_load(TestInitData::new(&test_cluster).await, 60).await;
+    }
+
+    #[sim_test(config = "test_config()")]
+    async fn test_simulated_load_with_reconfig_and_correlated_crashes() {
+        sui_protocol_config::ProtocolConfig::poison_get_for_min_version();
+
+        register_fail_point_if("correlated-crash-after-consensus-commit-boundary", || true);
+        // TODO: enable this - right now it causes rocksdb errors when re-opening DBs
+        //register_fail_point_if("correlated-crash-process-certificate", || true);
+
+        let test_cluster = build_test_cluster(4, 10000).await;
         test_simulated_load(TestInitData::new(&test_cluster).await, 60).await;
     }
 
@@ -267,6 +282,7 @@ mod test {
             },
         );
         register_fail_point_async("narwhal-delay", || delay_failpoint(10..20, 0.001));
+        register_fail_point_async("writeback-cache-commit", || delay_failpoint(10..20, 0.001));
 
         test_simulated_load(TestInitData::new(&test_cluster).await, 120).await;
     }
@@ -306,7 +322,7 @@ mod test {
 
     #[sim_test(config = "test_config()")]
     async fn test_data_ingestion_pipeline() {
-        let path = TempDir::new().unwrap().into_path();
+        let path = nondeterministic!(TempDir::new().unwrap()).into_path();
         let test_cluster = init_test_cluster_builder(4, 1000)
             .with_data_ingestion_dir(path.clone())
             .build()
@@ -407,50 +423,51 @@ mod test {
         let finished = Arc::new(AtomicBool::new(false));
         let finished_clone = finished.clone();
         let _handle = tokio::task::spawn(async move {
+            info!("Running from version {starting_version} to version {max_ver}");
             for version in starting_version..=max_ver {
-                info!("Targeting protocol version: {}", version);
+                info!("Targeting protocol version: {version}");
                 test_cluster.wait_for_all_nodes_upgrade_to(version).await;
-                info!("All nodes are at protocol version: {}", version);
+                info!("All nodes are at protocol version: {version}");
                 // Let all nodes run for a few epochs at this version.
-                tokio::time::sleep(Duration::from_secs(50)).await;
+                tokio::time::sleep(Duration::from_secs(30)).await;
                 if version == max_ver {
-                    let stake_subsidy_start_epoch = test_cluster
-                        .sui_client()
-                        .governance_api()
-                        .get_latest_sui_system_state()
-                        .await
-                        .unwrap()
-                        .stake_subsidy_start_epoch;
-                    assert_eq!(stake_subsidy_start_epoch, 20);
                     break;
                 }
                 let next_version = version + 1;
                 let new_framework = sui_framework_snapshot::load_bytecode_snapshot(next_version);
-                let new_framework_ref: Vec<_> = match &new_framework {
-                    Ok(f) => f.iter().collect(),
+                let new_framework_ref = match &new_framework {
+                    Ok(f) => Some(f.iter().collect::<Vec<_>>()),
                     Err(_) => {
-                        // The only time where we could not load an existing snapshot is when
-                        // it's the next version to be pushed out, and hence we don't have a
-                        // snapshot yet. This must be the current max version.
-                        assert_eq!(next_version, max_ver);
-                        BuiltInFramework::iter_system_packages().collect()
+                        if next_version == max_ver {
+                            Some(BuiltInFramework::iter_system_packages().collect::<Vec<_>>())
+                        } else {
+                            // Often we want to be able to create multiple protocol config versions
+                            // on main that none have shipped to any production network. In this case,
+                            // some of the protocol versions may not have a framework snapshot.
+                            None
+                        }
                     }
                 };
-                for package in new_framework_ref {
-                    framework_injection::set_override(*package.id(), package.modules().clone());
+                if let Some(new_framework_ref) = new_framework_ref {
+                    for package in new_framework_ref {
+                        framework_injection::set_override(*package.id(), package.modules().clone());
+                    }
+                    info!("Framework injected for next_version {next_version}");
+                } else {
+                    info!("No framework snapshot to inject for next_version {next_version}");
                 }
-                info!("Framework injected");
                 test_cluster
                     .update_validator_supported_versions(
                         SupportedProtocolVersions::new_for_testing(starting_version, next_version),
                     )
                     .await;
+                info!("Updated validator supported versions to include next_version {next_version}")
             }
             finished_clone.store(true, Ordering::SeqCst);
         });
 
-        test_simulated_load(test_init_data_clone, 120).await;
-        for _ in 0..120 {
+        test_simulated_load(test_init_data_clone, 150).await;
+        for _ in 0..150 {
             if finished.load(Ordering::Relaxed) {
                 break;
             }

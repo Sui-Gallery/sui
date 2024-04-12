@@ -7,8 +7,8 @@ use crate::authenticator_state::ActiveJwk;
 use crate::committee::{EpochId, ProtocolVersion};
 use crate::crypto::{
     default_hash, AuthoritySignInfo, AuthoritySignature, AuthorityStrongQuorumSignInfo,
-    DefaultHash, Ed25519SuiSignature, EmptySignInfo, Signature, Signer, SuiSignatureInner,
-    ToFromBytes,
+    DefaultHash, Ed25519SuiSignature, EmptySignInfo, RandomnessRound, Signature, Signer,
+    SuiSignatureInner, ToFromBytes,
 };
 use crate::digests::ConsensusCommitDigest;
 use crate::digests::{CertificateDigest, SenderSignedDataDigest};
@@ -22,8 +22,9 @@ use crate::object::{MoveObject, Object, Owner};
 use crate::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use crate::signature::{AuthenticatorTrait, GenericSignature, VerifyParams};
 use crate::{
-    SUI_AUTHENTICATOR_STATE_OBJECT_ID, SUI_CLOCK_OBJECT_ID, SUI_CLOCK_OBJECT_SHARED_VERSION,
-    SUI_FRAMEWORK_PACKAGE_ID, SUI_RANDOMNESS_STATE_OBJECT_ID, SUI_SYSTEM_STATE_OBJECT_ID,
+    SUI_AUTHENTICATOR_STATE_OBJECT_ID, SUI_AUTHENTICATOR_STATE_OBJECT_SHARED_VERSION,
+    SUI_CLOCK_OBJECT_ID, SUI_CLOCK_OBJECT_SHARED_VERSION, SUI_FRAMEWORK_PACKAGE_ID,
+    SUI_RANDOMNESS_STATE_OBJECT_ID, SUI_SYSTEM_STATE_OBJECT_ID,
     SUI_SYSTEM_STATE_OBJECT_SHARED_VERSION,
 };
 use enum_dispatch::enum_dispatch;
@@ -32,10 +33,12 @@ use itertools::Either;
 use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
 use move_core_types::{identifier::Identifier, language_storage::TypeTag};
+use nonempty::{nonempty, NonEmpty};
 use serde::{Deserialize, Serialize};
 use shared_crypto::intent::{Intent, IntentMessage, IntentScope};
 use std::fmt::Write;
 use std::fmt::{Debug, Display, Formatter};
+use std::iter::once;
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     hash::Hash,
@@ -89,6 +92,11 @@ impl CallArg {
         initial_shared_version: SUI_CLOCK_OBJECT_SHARED_VERSION,
         mutable: true,
     });
+    pub const AUTHENTICATOR_MUT: Self = Self::Object(ObjectArg::SharedObject {
+        id: SUI_AUTHENTICATOR_STATE_OBJECT_ID,
+        initial_shared_version: SUI_AUTHENTICATOR_STATE_OBJECT_SHARED_VERSION,
+        mutable: true,
+    });
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -109,42 +117,45 @@ pub enum ObjectArg {
 fn type_tag_validity_check(
     tag: &TypeTag,
     config: &ProtocolConfig,
-    depth: u32,
-    starting_count: usize,
-) -> UserInputResult<usize> {
-    fp_ensure!(
-        depth < config.max_type_argument_depth(),
-        UserInputError::SizeLimitExceeded {
-            limit: "maximum type argument depth in a call transaction".to_string(),
-            value: config.max_type_argument_depth().to_string()
+    starting_count: &mut usize,
+) -> UserInputResult<()> {
+    let mut stack = vec![(tag, 1)];
+    while let Some((tag, depth)) = stack.pop() {
+        *starting_count += 1;
+        fp_ensure!(
+            *starting_count < config.max_type_arguments() as usize,
+            UserInputError::SizeLimitExceeded {
+                limit: "maximum type arguments in a call transaction".to_string(),
+                value: config.max_type_arguments().to_string()
+            }
+        );
+        fp_ensure!(
+            depth < config.max_type_argument_depth(),
+            UserInputError::SizeLimitExceeded {
+                limit: "maximum type argument depth in a call transaction".to_string(),
+                value: config.max_type_argument_depth().to_string()
+            }
+        );
+        match tag {
+            TypeTag::Bool
+            | TypeTag::U8
+            | TypeTag::U64
+            | TypeTag::U128
+            | TypeTag::Address
+            | TypeTag::Signer
+            | TypeTag::U16
+            | TypeTag::U32
+            | TypeTag::U256 => (),
+            TypeTag::Vector(t) => {
+                stack.push((t, depth + 1));
+            }
+            TypeTag::Struct(s) => {
+                let next_depth = depth + 1;
+                stack.extend(s.type_params.iter().map(|t| (t, next_depth)));
+            }
         }
-    );
-    let count = 1 + match tag {
-        TypeTag::Bool
-        | TypeTag::U8
-        | TypeTag::U64
-        | TypeTag::U128
-        | TypeTag::Address
-        | TypeTag::Signer
-        | TypeTag::U16
-        | TypeTag::U32
-        | TypeTag::U256 => 0,
-        TypeTag::Vector(t) => {
-            type_tag_validity_check(t.as_ref(), config, depth + 1, starting_count + 1)?
-        }
-        TypeTag::Struct(s) => s.type_params.iter().try_fold(0, |accum, t| {
-            let count = accum + type_tag_validity_check(t, config, depth + 1, starting_count + 1)?;
-            fp_ensure!(
-                count + starting_count < config.max_type_arguments() as usize,
-                UserInputError::SizeLimitExceeded {
-                    limit: "maximum type arguments in a call transaction".to_string(),
-                    value: config.max_type_arguments().to_string()
-                }
-            );
-            Ok(count)
-        })?,
-    };
-    Ok(count)
+    }
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
@@ -231,7 +242,7 @@ pub struct RandomnessStateUpdate {
     /// Epoch of the randomness state update transaction
     pub epoch: u64,
     /// Randomness round of the update
-    pub randomness_round: u64,
+    pub randomness_round: RandomnessRound,
     /// Updated random bytes
     pub random_bytes: Vec<u8>,
     /// The initial version of the randomness object that it was shared at.
@@ -283,6 +294,7 @@ pub enum EndOfEpochTransactionKind {
     AuthenticatorStateCreate,
     AuthenticatorStateExpire(AuthenticatorStateExpire),
     RandomnessStateCreate,
+    DenyListStateCreate,
 }
 
 impl EndOfEpochTransactionKind {
@@ -326,6 +338,10 @@ impl EndOfEpochTransactionKind {
         Self::RandomnessStateCreate
     }
 
+    pub fn new_deny_list_state_create() -> Self {
+        Self::DenyListStateCreate
+    }
+
     fn input_objects(&self) -> Vec<InputObjectKind> {
         match self {
             Self::ChangeEpoch(_) => {
@@ -344,6 +360,7 @@ impl EndOfEpochTransactionKind {
                 }]
             }
             Self::RandomnessStateCreate => vec![],
+            Self::DenyListStateCreate => vec![],
         }
     }
 
@@ -357,6 +374,7 @@ impl EndOfEpochTransactionKind {
             })),
             Self::AuthenticatorStateCreate => Either::Right(iter::empty()),
             Self::RandomnessStateCreate => Either::Right(iter::empty()),
+            Self::DenyListStateCreate => Either::Right(iter::empty()),
         }
     }
 
@@ -370,6 +388,10 @@ impl EndOfEpochTransactionKind {
             Self::RandomnessStateCreate => {
                 // Transaction should have been rejected earlier (or never formed).
                 assert!(config.random_beacon());
+            }
+            Self::DenyListStateCreate => {
+                // Transaction should have been rejected earlier (or never formed).
+                assert!(config.enable_coin_deny_list());
             }
         }
         Ok(())
@@ -443,6 +465,13 @@ impl VersionedProtocolMessage for TransactionKind {
                                 if !protocol_config.random_beacon() {
                                     return Err(SuiError::UnsupportedFeatureError {
                                         error: "random beacon not enabled".to_string(),
+                                    });
+                                }
+                            }
+                            EndOfEpochTransactionKind::DenyListStateCreate => {
+                                if !protocol_config.enable_coin_deny_list() {
+                                    return Err(SuiError::UnsupportedFeatureError {
+                                        error: "coin deny list not enabled".to_string(),
                                     });
                                 }
                             }
@@ -714,15 +743,8 @@ impl ProgrammableMoveCall {
         ));
         fp_ensure!(!is_blocked, UserInputError::BlockedMoveFunction);
         let mut type_arguments_count = 0;
-        for tag in self.type_arguments.iter() {
-            type_arguments_count += type_tag_validity_check(tag, config, 1, type_arguments_count)?;
-            fp_ensure!(
-                type_arguments_count < config.max_type_arguments() as usize,
-                UserInputError::SizeLimitExceeded {
-                    limit: "maximum type arguments in a call transaction".to_string(),
-                    value: config.max_type_arguments().to_string()
-                }
-            );
+        for tag in &self.type_arguments {
+            type_tag_validity_check(tag, config, &mut type_arguments_count)?;
         }
         fp_ensure!(
             self.arguments.len() < config.max_arguments() as usize,
@@ -732,6 +754,12 @@ impl ProgrammableMoveCall {
             }
         );
         Ok(())
+    }
+
+    fn is_input_arg_used(&self, arg: u16) -> bool {
+        self.arguments
+            .iter()
+            .any(|a| matches!(a, Argument::Input(inp) if *inp == arg))
     }
 }
 
@@ -814,14 +842,8 @@ impl Command {
                     UserInputError::EmptyCommandInput
                 );
                 if let Some(ty) = ty_opt {
-                    let type_arguments_count = type_tag_validity_check(ty, config, 1, 0)?;
-                    fp_ensure!(
-                        type_arguments_count < config.max_type_arguments() as usize,
-                        UserInputError::SizeLimitExceeded {
-                            limit: "maximum type arguments in a call transaction".to_string(),
-                            value: config.max_type_arguments().to_string()
-                        }
-                    );
+                    let mut type_arguments_count = 0;
+                    type_tag_validity_check(ty, config, &mut type_arguments_count)?;
                 }
                 fp_ensure!(
                     args.len() < config.max_arguments() as usize,
@@ -832,18 +854,7 @@ impl Command {
                     }
                 );
             }
-            Command::Publish(modules, _dep_ids) => {
-                fp_ensure!(!modules.is_empty(), UserInputError::EmptyCommandInput);
-                fp_ensure!(
-                    modules.len() < config.max_modules_in_publish() as usize,
-                    UserInputError::SizeLimitExceeded {
-                        limit: "maximum modules in a programmable transaction publish command"
-                            .to_string(),
-                        value: config.max_modules_in_publish().to_string()
-                    }
-                );
-            }
-            Command::Upgrade(modules, _, _, _) => {
+            Command::Publish(modules, deps) | Command::Upgrade(modules, deps, _, _) => {
                 fp_ensure!(!modules.is_empty(), UserInputError::EmptyCommandInput);
                 fp_ensure!(
                     modules.len() < config.max_modules_in_publish() as usize,
@@ -853,23 +864,53 @@ impl Command {
                         value: config.max_modules_in_publish().to_string()
                     }
                 );
+                if let Some(max_package_dependencies) = config.max_package_dependencies_as_option()
+                {
+                    fp_ensure!(
+                        deps.len() < max_package_dependencies as usize,
+                        UserInputError::SizeLimitExceeded {
+                            limit: "maximum package dependencies".to_string(),
+                            value: max_package_dependencies.to_string()
+                        }
+                    );
+                };
             }
         };
         Ok(())
     }
+
+    fn is_input_arg_used(&self, input_arg: u16) -> bool {
+        match self {
+            Command::MoveCall(c) => c.is_input_arg_used(input_arg),
+            Command::TransferObjects(args, arg)
+            | Command::MergeCoins(arg, args)
+            | Command::SplitCoins(arg, args) => args
+                .iter()
+                .chain(once(arg))
+                .any(|a| matches!(a, Argument::Input(inp) if *inp == input_arg)),
+            Command::MakeMoveVec(_, args) => args
+                .iter()
+                .any(|a| matches!(a, Argument::Input(inp) if *inp == input_arg)),
+            Command::Upgrade(_, _, _, arg) => {
+                matches!(arg, Argument::Input(inp) if *inp == input_arg)
+            }
+            Command::Publish(_, _) => false,
+        }
+    }
 }
 
-fn write_sep<T: Display>(
+pub fn write_sep<T: Display>(
     f: &mut Formatter<'_>,
     items: impl IntoIterator<Item = T>,
     sep: &str,
 ) -> std::fmt::Result {
-    let mut xs = items.into_iter().peekable();
-    while let Some(x) = xs.next() {
-        if xs.peek().is_some() {
-            write!(f, "{sep}")?;
-        }
-        write!(f, "{x}")?;
+    let mut xs = items.into_iter();
+    let Some(x) = xs.next() else {
+        return Ok(());
+    };
+    write!(f, "{x}")?;
+    for x in xs {
+        write!(f, "{sep}{x}")?;
     }
     Ok(())
 }
@@ -914,18 +955,22 @@ impl ProgrammableTransaction {
                 value: config.max_programmable_tx_commands().to_string()
             }
         );
+        let total_inputs = self.input_objects()?.len() + self.receiving_objects().len();
+        fp_ensure!(
+            total_inputs <= config.max_input_objects() as usize,
+            UserInputError::SizeLimitExceeded {
+                limit: "maximum input + receiving objects in a transaction".to_string(),
+                value: config.max_input_objects().to_string()
+            }
+        );
         for input in inputs {
             input.validity_check(config)?
         }
-        let mut publish_count = 0u64;
-        for command in commands {
-            command.validity_check(config)?;
-            match command {
-                Command::Publish(_, _) | Command::Upgrade(_, _, _, _) => publish_count += 1,
-                _ => (),
-            }
-        }
         if let Some(max_publish_commands) = config.max_publish_or_upgrade_per_ptb_as_option() {
+            let publish_count = commands
+                .iter()
+                .filter(|c| matches!(c, Command::Publish(_, _) | Command::Upgrade(_, _, _, _)))
+                .count() as u64;
             fp_ensure!(
                 publish_count <= max_publish_commands,
                 UserInputError::MaxPublishCountExceeded {
@@ -934,6 +979,31 @@ impl ProgrammableTransaction {
                 }
             );
         }
+        for command in commands {
+            command.validity_check(config)?;
+        }
+
+        // A command that uses Random can only be followed by TransferObjects or MergeCoins.
+        if let Some(random_index) = inputs.iter().position(|obj| {
+            matches!(obj, CallArg::Object(ObjectArg::SharedObject { id, .. }) if *id == SUI_RANDOMNESS_STATE_OBJECT_ID)
+        }) {
+            let mut used_random_object = false;
+            let random_index = random_index.try_into().unwrap();
+            for command in commands {
+                if !used_random_object {
+                    used_random_object = command.is_input_arg_used(random_index);
+                } else {
+                    fp_ensure!(
+                        matches!(
+                            command,
+                            Command::TransferObjects(_, _) | Command::MergeCoins(_, _)
+                        ),
+                        UserInputError::PostRandomCommandRestrictions
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -1101,16 +1171,17 @@ impl TransactionKind {
     }
 
     pub fn is_system_tx(&self) -> bool {
-        matches!(
-            self,
+        // Keep this as an exhaustive match so that we can't forget to update it.
+        match self {
             TransactionKind::ChangeEpoch(_)
-                | TransactionKind::Genesis(_)
-                | TransactionKind::ConsensusCommitPrologue(_)
-                | TransactionKind::ConsensusCommitPrologueV2(_)
-                | TransactionKind::AuthenticatorStateUpdate(_)
-                | TransactionKind::RandomnessStateUpdate(_)
-                | TransactionKind::EndOfEpochTransaction(_)
-        )
+            | TransactionKind::Genesis(_)
+            | TransactionKind::ConsensusCommitPrologue(_)
+            | TransactionKind::ConsensusCommitPrologueV2(_)
+            | TransactionKind::AuthenticatorStateUpdate(_)
+            | TransactionKind::RandomnessStateUpdate(_)
+            | TransactionKind::EndOfEpochTransaction(_) => true,
+            TransactionKind::ProgrammableTransaction(_) => false,
+        }
     }
 
     pub fn is_end_of_epoch_tx(&self) -> bool {
@@ -1263,6 +1334,8 @@ impl TransactionKind {
     pub fn validity_check(&self, config: &ProtocolConfig) -> UserInputResult {
         match self {
             TransactionKind::ProgrammableTransaction(p) => p.validity_check(config)?,
+            // All transactiond kinds below are assumed to be system,
+            // and no validity or limit checks are performed.
             TransactionKind::ChangeEpoch(_)
             | TransactionKind::Genesis(_)
             | TransactionKind::ConsensusCommitPrologue(_)
@@ -1821,7 +1894,7 @@ pub trait TransactionDataAPI {
     fn into_kind(self) -> TransactionKind;
 
     /// Transaction signer and Gas owner
-    fn signers(&self) -> Vec<SuiAddress>;
+    fn signers(&self) -> NonEmpty<SuiAddress>;
 
     fn gas_data(&self) -> &GasData;
 
@@ -1888,8 +1961,8 @@ impl TransactionDataAPI for TransactionDataV1 {
     }
 
     /// Transaction signer and Gas owner
-    fn signers(&self) -> Vec<SuiAddress> {
-        let mut signers = vec![self.sender];
+    fn signers(&self) -> NonEmpty<SuiAddress> {
+        let mut signers = nonempty![self.sender];
         if self.gas_owner() != self.sender {
             signers.push(self.gas_owner());
         }
@@ -2058,7 +2131,7 @@ impl SenderSignedData {
         // assert is safe - SenderSignedTransaction::verify ensures length is 1.
         assert_eq!(self.0.len(), 1);
         self.0
-            .get(0)
+            .first()
             .expect("SenderSignedData must contain exactly one transaction")
     }
 
@@ -2083,9 +2156,9 @@ impl SenderSignedData {
         let mut mapping = BTreeMap::new();
         for sig in &self.inner().tx_signatures {
             if verify_legacy_zklogin_address {
-                // Try deriving the address from the legacy way.
+                // Try deriving the address from the legacy padded way.
                 if let GenericSignature::ZkLoginAuthenticator(z) = sig {
-                    mapping.insert(SuiAddress::legacy_try_from(z)?, sig);
+                    mapping.insert(SuiAddress::try_from_padded(&z.inputs)?, sig);
                 };
             }
             let address = sig.try_into()?;
@@ -2131,6 +2204,55 @@ impl SenderSignedData {
         bcs::serialize_into(&mut digest, self).expect("serialization should not fail");
         let hash = digest.finalize();
         SenderSignedDataDigest::new(hash.into())
+    }
+
+    pub fn serialized_size(&self) -> SuiResult<usize> {
+        bcs::serialized_size(self).map_err(|e| SuiError::TransactionSerializationError {
+            error: e.to_string(),
+        })
+    }
+
+    /// Perform cheap validity checks on the sender signed transaction, including its size,
+    /// input count, command count, etc.
+    pub fn validity_check(&self, config: &ProtocolConfig) -> SuiResult {
+        // Enforce overall transaction size limit.
+        let tx_size = self.serialized_size()?;
+        let max_tx_size_bytes = config.max_tx_size_bytes();
+
+        fp_ensure!(
+            tx_size as u64 <= max_tx_size_bytes,
+            SuiError::UserInputError {
+                error: UserInputError::SizeLimitExceeded {
+                    limit: format!(
+                        "serialized transaction size exceeded maximum of {max_tx_size_bytes}"
+                    ),
+                    value: tx_size.to_string(),
+                }
+            }
+        );
+
+        self.verify_user_input()?;
+
+        let tx_data = self.transaction_data();
+        tx_data
+            .check_version_supported(config)
+            .map_err(Into::<SuiError>::into)?;
+        tx_data
+            .validity_check(config)
+            .map_err(Into::<SuiError>::into)?;
+
+        Ok(())
+    }
+
+    pub fn verify_max_epoch_for_all_sigs(
+        &self,
+        epoch: EpochId,
+        upper_bound_for_max_epoch: Option<u64>,
+    ) -> SuiResult {
+        for sig in &self.inner().tx_signatures {
+            sig.verify_user_authenticator_epoch(epoch, upper_bound_for_max_epoch)?;
+        }
+        Ok(())
     }
 }
 
@@ -2222,9 +2344,9 @@ impl Message for SenderSignedData {
 
     fn verify_epoch(&self, epoch: EpochId) -> SuiResult {
         for sig in &self.inner().tx_signatures {
-            sig.verify_user_authenticator_epoch(epoch)?;
+            // the upper bound is checked for SenderSignedData only via verify_max_epoch_for_all_sigs
+            sig.verify_user_authenticator_epoch(epoch, None)?;
         }
-
         Ok(())
     }
 }
@@ -2235,12 +2357,7 @@ impl AuthenticatedMessage for SenderSignedData {
         for (signer, signature) in
             self.get_signer_sig_mapping(verify_params.verify_legacy_zklogin_address)?
         {
-            signature.verify_uncached_checks(
-                self.intent_message(),
-                signer,
-                verify_params,
-                signature.check_author(),
-            )?;
+            signature.verify_uncached_checks(self.intent_message(), signer, verify_params)?;
         }
         Ok(())
     }
@@ -2282,12 +2399,7 @@ impl AuthenticatedMessage for SenderSignedData {
 
         // Verify all present signatures.
         for (signer, signature) in present_sigs {
-            signature.verify_claims(
-                self.intent_message(),
-                signer,
-                verify_params,
-                signature.check_author(),
-            )?;
+            signature.verify_claims(self.intent_message(), signer, verify_params)?;
         }
         Ok(())
     }
@@ -2315,6 +2427,30 @@ impl<S> Envelope<SenderSignedData, S> {
             .into_iter()
     }
 
+    // Returns the primary key for this transaction.
+    pub fn key(&self) -> TransactionKey {
+        match &self.data().intent_message().value.kind() {
+            TransactionKind::RandomnessStateUpdate(rsu) => {
+                TransactionKey::RandomnessRound(rsu.epoch, rsu.randomness_round)
+            }
+            _ => TransactionKey::Digest(*self.digest()),
+        }
+    }
+
+    // Returns non-Digest keys that could be used to refer to this transaction.
+    //
+    // At the moment this returns a single Option for efficiency, but if more key types are added,
+    // the return type could change to Vec<TransactionKey>.
+    pub fn non_digest_key(&self) -> Option<TransactionKey> {
+        match &self.data().intent_message().value.kind() {
+            TransactionKind::RandomnessStateUpdate(rsu) => Some(TransactionKey::RandomnessRound(
+                rsu.epoch,
+                rsu.randomness_round,
+            )),
+            _ => None,
+        }
+    }
+
     pub fn is_system_tx(&self) -> bool {
         self.data().intent_message().value.is_system_tx()
     }
@@ -2322,29 +2458,31 @@ impl<S> Envelope<SenderSignedData, S> {
     pub fn is_sponsored_tx(&self) -> bool {
         self.data().intent_message().value.is_sponsored_tx()
     }
+
+    pub fn is_randomness_reader(&self) -> bool {
+        self.shared_input_objects()
+            .any(|obj| obj.id() == SUI_RANDOMNESS_STATE_OBJECT_ID)
+    }
 }
 
 impl Transaction {
     pub fn from_data_and_signer(
         data: TransactionData,
-        intent: Intent,
         signers: Vec<&dyn Signer<Signature>>,
     ) -> Self {
-        let intent_msg = IntentMessage::new(intent.clone(), data.clone());
-        let mut signatures = Vec::with_capacity(signers.len());
-        for signer in signers {
-            signatures.push(Signature::new_secure(&intent_msg, signer));
-        }
-        Self::from_data(data, intent, signatures)
+        let signatures = {
+            let intent_msg = IntentMessage::new(Intent::sui_transaction(), &data);
+            signers
+                .into_iter()
+                .map(|s| Signature::new_secure(&intent_msg, s))
+                .collect()
+        };
+        Self::from_data(data, signatures)
     }
 
     // TODO: Rename this function and above to make it clearer.
-    pub fn from_data(data: TransactionData, intent: Intent, signatures: Vec<Signature>) -> Self {
-        Self::from_generic_sig_data(
-            data,
-            intent,
-            signatures.into_iter().map(|s| s.into()).collect(),
-        )
+    pub fn from_data(data: TransactionData, signatures: Vec<Signature>) -> Self {
+        Self::from_generic_sig_data(data, signatures.into_iter().map(|s| s.into()).collect())
     }
 
     pub fn signature_from_signer(
@@ -2356,12 +2494,12 @@ impl Transaction {
         Signature::new_secure(&intent_msg, signer)
     }
 
-    pub fn from_generic_sig_data(
-        data: TransactionData,
-        intent: Intent,
-        signatures: Vec<GenericSignature>,
-    ) -> Self {
-        Self::new(SenderSignedData::new(data, intent, signatures))
+    pub fn from_generic_sig_data(data: TransactionData, signatures: Vec<GenericSignature>) -> Self {
+        Self::new(SenderSignedData::new(
+            data,
+            Intent::sui_transaction(),
+            signatures,
+        ))
     }
 
     /// Returns the Base64 encoded tx_bytes
@@ -2458,7 +2596,7 @@ impl VerifiedTransaction {
 
     pub fn new_randomness_state_update(
         epoch: u64,
-        randomness_round: u64,
+        randomness_round: RandomnessRound,
         random_bytes: Vec<u8>,
         randomness_obj_initial_shared_version: SequenceNumber,
     ) -> Self {
@@ -2925,6 +3063,10 @@ impl InputObjects {
     pub fn iter(&self) -> impl Iterator<Item = &ObjectReadResult> {
         self.objects.iter()
     }
+
+    pub fn iter_objects(&self) -> impl Iterator<Item = &Object> {
+        self.objects.iter().filter_map(|o| o.as_object())
+    }
 }
 
 // Result of attempting to read a receiving object (currently only at signing time).
@@ -2978,6 +3120,10 @@ impl ReceivingObjects {
     pub fn iter(&self) -> impl Iterator<Item = &ReceivingObjectReadResult> {
         self.objects.iter()
     }
+
+    pub fn iter_objects(&self) -> impl Iterator<Item = &Object> {
+        self.objects.iter().filter_map(|o| o.object.as_object())
+    }
 }
 
 impl From<Vec<ReceivingObjectReadResult>> for ReceivingObjects {
@@ -2997,5 +3143,23 @@ impl Display for CertifiedTransaction {
         )?;
         write!(writer, "{}", &self.data().intent_message().value.kind())?;
         write!(f, "{}", writer)
+    }
+}
+
+/// TransactionKey uniquely identifies a transaction across all epochs.
+/// Note that a single transaction may have multiple keys, for example a RandomnessStateUpdate
+/// could be identified by both `Digest` and `RandomnessRound`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum TransactionKey {
+    Digest(TransactionDigest),
+    RandomnessRound(EpochId, RandomnessRound),
+}
+
+impl TransactionKey {
+    pub fn unwrap_digest(&self) -> &TransactionDigest {
+        match self {
+            TransactionKey::Digest(d) => d,
+            _ => panic!("called expect_digest on a non-Digest TransactionKey: {self:?}"),
+        }
     }
 }

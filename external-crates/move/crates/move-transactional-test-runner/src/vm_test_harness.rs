@@ -8,7 +8,7 @@ use crate::{
     framework::{run_test_impl, CompiledState, MaybeNamedCompiledModule, MoveTestAdapter},
     tasks::{EmptyCommand, InitCommand, SyntaxChoice, TaskInput},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Error, Result};
 use async_trait::async_trait;
 use clap::Parser;
 use move_binary_format::{
@@ -34,11 +34,12 @@ use move_vm_runtime::{
 };
 use move_vm_test_utils::{gas_schedule::GasStatus, InMemoryStorage};
 use once_cell::sync::Lazy;
+use std::sync::Arc;
 
 const STD_ADDR: AccountAddress = AccountAddress::ONE;
 
-struct SimpleVMTestAdapter<'a> {
-    compiled_state: CompiledState<'a>,
+struct SimpleVMTestAdapter {
+    compiled_state: CompiledState,
     storage: InMemoryStorage,
     default_syntax: SyntaxChoice,
 }
@@ -50,14 +51,14 @@ pub struct AdapterInitArgs {
 }
 
 #[async_trait]
-impl<'a> MoveTestAdapter<'a> for SimpleVMTestAdapter<'a> {
+impl<'a> MoveTestAdapter<'a> for SimpleVMTestAdapter {
     type ExtraInitArgs = AdapterInitArgs;
     type ExtraPublishArgs = EmptyCommand;
     type ExtraValueArgs = ();
     type ExtraRunArgs = EmptyCommand;
     type Subcommand = EmptyCommand;
 
-    fn compiled_state(&mut self) -> &mut CompiledState<'a> {
+    fn compiled_state(&mut self) -> &mut CompiledState {
         &mut self.compiled_state
     }
 
@@ -65,10 +66,15 @@ impl<'a> MoveTestAdapter<'a> for SimpleVMTestAdapter<'a> {
         self.default_syntax
     }
 
+    async fn cleanup_resources(&mut self) -> Result<()> {
+        Ok(())
+    }
+
     async fn init(
         default_syntax: SyntaxChoice,
-        pre_compiled_deps: Option<&'a FullyCompiledProgram>,
+        pre_compiled_deps: Option<Arc<FullyCompiledProgram>>,
         task_opt: Option<TaskInput<(InitCommand, Self::ExtraInitArgs)>>,
+        _path: &Path,
     ) -> (Self, Option<String>) {
         let (additional_mapping, compiler_edition) = match task_opt.map(|t| t.command) {
             Some((InitCommand { named_addresses }, AdapterInitArgs { edition })) => {
@@ -95,6 +101,7 @@ impl<'a> MoveTestAdapter<'a> for SimpleVMTestAdapter<'a> {
                 pre_compiled_deps,
                 None,
                 Some(compiler_edition),
+                None,
             ),
             default_syntax,
             storage: InMemoryStorage::new(),
@@ -223,6 +230,10 @@ impl<'a> MoveTestAdapter<'a> for SimpleVMTestAdapter<'a> {
     ) -> Result<Option<String>> {
         unimplemented!()
     }
+
+    async fn process_error(&self, err: Error) -> Error {
+        err
+    }
 }
 
 pub fn format_vm_error(e: &VMError) -> String {
@@ -248,7 +259,7 @@ pub fn format_vm_error(e: &VMError) -> String {
     )
 }
 
-impl<'a> SimpleVMTestAdapter<'a> {
+impl SimpleVMTestAdapter {
     fn perform_session_action<Ret>(
         &mut self,
         gas_budget: Option<u64>,
@@ -308,6 +319,7 @@ static PRECOMPILED_MOVE_STDLIB: Lazy<FullyCompiledProgram> = Lazy::new(|| {
 
 static MOVE_STDLIB_COMPILED: Lazy<Vec<CompiledModule>> = Lazy::new(|| {
     let (files, units_res) = move_compiler::Compiler::from_files(
+        None,
         move_stdlib::move_stdlib_files(),
         vec![],
         move_stdlib::move_stdlib_named_addresses(),
@@ -339,5 +351,6 @@ fn test_vm_config() -> VMConfig {
 
 #[tokio::main]
 pub async fn run_test(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    run_test_impl::<SimpleVMTestAdapter>(path, Some(&*PRECOMPILED_MOVE_STDLIB)).await
+    run_test_impl::<SimpleVMTestAdapter>(path, Some(Arc::new(PRECOMPILED_MOVE_STDLIB.clone())))
+        .await
 }

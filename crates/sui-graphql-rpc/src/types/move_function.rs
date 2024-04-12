@@ -4,8 +4,7 @@
 use async_graphql::*;
 use sui_package_resolver::FunctionDef;
 
-use crate::context_data::db_data_provider::PgManager;
-use crate::error::Error;
+use crate::{data::Db, error::Error};
 
 use super::{
     move_module::MoveModule,
@@ -22,6 +21,7 @@ pub(crate) struct MoveFunction {
     type_parameters: Vec<MoveFunctionTypeParameter>,
     parameters: Vec<OpenMoveType>,
     return_: Vec<OpenMoveType>,
+    checkpoint_viewed_at: u64,
 }
 
 #[derive(SimpleObject)]
@@ -34,11 +34,14 @@ pub(crate) struct MoveFunctionTypeParameter {
 impl MoveFunction {
     /// The module this function was defined in.
     async fn module(&self, ctx: &Context<'_>) -> Result<MoveModule> {
-        let Some(module) = ctx
-            .data_unchecked::<PgManager>()
-            .fetch_move_module(self.package, &self.module)
-            .await
-            .extend()?
+        let Some(module) = MoveModule::query(
+            ctx.data_unchecked(),
+            self.package,
+            &self.module,
+            self.checkpoint_viewed_at,
+        )
+        .await
+        .extend()?
         else {
             return Err(Error::Internal(format!(
                 "Failed to load module for function: {}::{}::{}",
@@ -88,7 +91,13 @@ impl MoveFunction {
 }
 
 impl MoveFunction {
-    pub(crate) fn new(package: SuiAddress, module: String, name: String, def: FunctionDef) -> Self {
+    pub(crate) fn new(
+        package: SuiAddress,
+        module: String,
+        name: String,
+        def: FunctionDef,
+        checkpoint_viewed_at: u64,
+    ) -> Self {
         let type_parameters = def
             .type_params
             .into_iter()
@@ -109,6 +118,22 @@ impl MoveFunction {
             type_parameters,
             parameters,
             return_,
+            checkpoint_viewed_at,
         }
+    }
+
+    pub(crate) async fn query(
+        db: &Db,
+        address: SuiAddress,
+        module: &str,
+        function: &str,
+        checkpoint_viewed_at: u64,
+    ) -> Result<Option<Self>, Error> {
+        let Some(module) = MoveModule::query(db, address, module, checkpoint_viewed_at).await?
+        else {
+            return Ok(None);
+        };
+
+        module.function_impl(function.to_string())
     }
 }

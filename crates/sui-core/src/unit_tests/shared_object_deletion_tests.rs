@@ -112,8 +112,7 @@ impl TestRunner {
 
     pub fn get_object_latest_version(&mut self, obj_id: ObjectID) -> SequenceNumber {
         self.authority_state
-            .database
-            .perpetual_tables
+            .get_cache_reader()
             .get_latest_object_ref_or_tombstone(obj_id)
             .unwrap()
             .unwrap()
@@ -560,8 +559,8 @@ impl TestRunner {
         epoch: EpochId,
     ) -> Option<TransactionDigest> {
         self.authority_state
-            .database
-            .get_deleted_shared_object_previous_tx_digest(object_id, version, epoch)
+            .get_cache_reader()
+            .get_deleted_shared_object_previous_tx_digest(object_id, *version, epoch)
             .unwrap()
     }
 }
@@ -1316,7 +1315,7 @@ async fn test_mutate_interleaved_read_only_enqueued_after_delete() {
 
     let res = user_1.enqueue_all_and_execute_all(txs).await.unwrap();
 
-    let delete_digest = res.get(0).unwrap().transaction_digest();
+    let delete_digest = res.first().unwrap().transaction_digest();
     let first_mutate_digest = res.get(2).unwrap().transaction_digest();
 
     {
@@ -1473,7 +1472,7 @@ async fn test_delete_with_shared_after_mutate_enqueued() {
         .await
         .unwrap();
 
-    let delete_effects = res.get(0).unwrap();
+    let delete_effects = res.first().unwrap();
     assert!(delete_effects.status().is_ok());
     let deleted_obj_ver = delete_effects.deleted()[0].1;
 

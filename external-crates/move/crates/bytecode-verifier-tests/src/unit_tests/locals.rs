@@ -7,7 +7,7 @@ use move_binary_format::file_format::{
     IdentifierIndex, ModuleHandleIndex, Signature, SignatureIndex, SignatureToken,
     Visibility::Public,
 };
-use move_bytecode_verifier::meter::BoundMeter;
+use move_bytecode_verifier_meter::bound::BoundMeter;
 use move_core_types::{identifier::Identifier, vm_status::StatusCode};
 
 #[test]
@@ -103,17 +103,17 @@ fn test_locals() {
         }
         for i in 0..MAX_LOCALS {
             code.push(Bytecode::Call(FunctionHandleIndex(1))); // calls returns_bool_and_u64
-            code.push(Bytecode::StLoc(i as u8)); // i'th local is now available for the first time
+            code.push(Bytecode::StLoc(i)); // i'th local is now available for the first time
             code.push(Bytecode::BrTrue(0));
         }
         code.push(Bytecode::Ret);
     }
 
-    let config = production_config();
-    let mut meter = BoundMeter::new(&config);
+    let (verifier_config, meter_config) = production_config();
+    let mut meter = BoundMeter::new(meter_config);
     let result = move_bytecode_verifier::verify_module_with_config_for_test(
         "test_locals",
-        &config,
+        &verifier_config,
         &m,
         &mut meter,
     );

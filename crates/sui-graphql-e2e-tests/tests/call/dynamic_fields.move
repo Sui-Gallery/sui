@@ -8,31 +8,29 @@
 // This test also demonstrates why we need separate dynamicField and dynamicObjectField APIs.
 // It is possible for a dynamic field and a dynamic object field to share the same name lookup.
 
-//# init --addresses Test=0x0 --accounts A --simulator
+//# init --protocol-version 39 --addresses Test=0x0 --accounts A --simulator
 
 //# publish
 module Test::m {
     use sui::dynamic_field as field;
     use sui::dynamic_object_field as ofield;
-    use sui::object;
-    use sui::tx_context::{sender, TxContext};
 
-    struct Wrapper has key {
+    public struct Wrapper has key {
         id: object::UID,
         o: Parent
     }
 
-    struct Parent has key, store {
+    public struct Parent has key, store {
         id: object::UID,
     }
 
-    struct Child has key, store {
+    public struct Child has key, store {
         id: object::UID,
     }
 
     public entry fun create_obj(ctx: &mut TxContext){
         let id = object::new(ctx);
-        sui::transfer::public_transfer(Parent { id }, sender(ctx))
+        sui::transfer::public_transfer(Parent { id }, ctx.sender())
     }
 
     public entry fun add_df(obj: &mut Parent) {
@@ -49,7 +47,7 @@ module Test::m {
 
     public entry fun wrap(parent: Parent, ctx: &mut TxContext) {
         let wrapper = Wrapper { id: object::new(ctx), o: parent };
-        sui::transfer::transfer(wrapper, sender(ctx))
+        sui::transfer::transfer(wrapper, ctx.sender())
     }
 }
 
@@ -61,10 +59,10 @@ module Test::m {
 
 //# create-checkpoint
 
-//# run-graphql --variables obj_2_0
+//# run-graphql
 {
-  object(address: $obj_2_0) {
-    dynamicFieldConnection {
+  object(address: "@{obj_2_0}") {
+    dynamicFields {
       nodes {
         name {
           type {
@@ -90,10 +88,10 @@ module Test::m {
 
 //# create-checkpoint
 
-//# run-graphql --variables obj_2_0
+//# run-graphql
 {
-  object(address: $obj_2_0) {
-    dynamicFieldConnection {
+  object(address: "@{obj_2_0}") {
+    dynamicFields {
       nodes {
         name {
           type {
@@ -115,10 +113,10 @@ module Test::m {
   }
 }
 
-//# run-graphql --variables obj_2_0
+//# run-graphql
 {
-  owner(address: $obj_2_0) {
-    dynamicFieldConnection {
+  owner(address: "@{obj_2_0}") {
+    dynamicFields {
       nodes {
         name {
           type {
@@ -142,9 +140,9 @@ module Test::m {
   }
 }
 
-//# run-graphql --variables obj_2_0
+//# run-graphql
 {
-  owner(address: $obj_2_0) {
+  owner(address: "@{obj_2_0}") {
     dynamicField(name: {type: "u64", bcs: "AAAAAAAAAAA="}) {
       name {
         type {
@@ -164,9 +162,9 @@ module Test::m {
   }
 }
 
-//# run-graphql --variables obj_2_0
+//# run-graphql
 {
-  owner(address: $obj_2_0) {
+  owner(address: "@{obj_2_0}") {
     dynamicObjectField(name: {type: "u64", bcs: "AAAAAAAAAAA="}) {
       value {
         ... on MoveObject {

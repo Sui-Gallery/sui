@@ -1,30 +1,40 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{error::Error, types::execution_result::ExecutionResult};
+use crate::types::transaction_block_effects::TransactionBlockEffectsKind;
+use crate::{
+    error::Error, types::execution_result::ExecutionResult,
+    types::transaction_block_effects::TransactionBlockEffects,
+};
 use async_graphql::*;
 use fastcrypto::encoding::Encoding;
 use fastcrypto::{encoding::Base64, traits::ToFromBytes};
-use shared_crypto::intent::Intent;
 use sui_json_rpc_types::SuiTransactionBlockResponseOptions;
 use sui_sdk::SuiClient;
+use sui_types::effects::TransactionEffects as NativeTransactionEffects;
+use sui_types::event::Event as NativeEvent;
 use sui_types::quorum_driver_types::ExecuteTransactionRequestType;
+use sui_types::transaction::SenderSignedData;
 use sui_types::{signature::GenericSignature, transaction::Transaction};
-
 pub struct Mutation;
 
+/// Mutations are used to write to the Sui network.
 #[Object]
 impl Mutation {
     /// Execute a transaction, committing its effects on chain.
     ///
-    /// `txBytes` is a `TransactionData` struct that has been BCS-encoded
-    ///     and then Base64-encoded.
-    /// `signatures` are a list of `flag || signature || pubkey` bytes,
-    ///     Base64-encoded.
+    /// - `txBytes` is a `TransactionData` struct that has been BCS-encoded and then Base64-encoded.
+    /// - `signatures` are a list of `flag || signature || pubkey` bytes, Base64-encoded.
     ///
-    /// Waits until the transaction has been finalized on chain to return
-    /// its transaction digest.  If the transaction could not be
-    /// finalized, returns the errors that prevented it, instead.
+    /// Waits until the transaction has reached finality on chain to return its transaction digest,
+    /// or returns the error that prevented finality if that was not possible. A transaction is
+    /// final when its effects are guaranteed on chain (it cannot be revoked).
+    ///
+    /// There may be a delay between transaction finality and when GraphQL requests (including the
+    /// request that issued the transaction) reflect its effects. As a result, queries that depend
+    /// on indexing the state of the chain (e.g. contents of output objects, address-level balance
+    /// information at the time of the transaction), must wait for indexing to catch up by polling
+    /// for the transaction digest using `Query.transactionBlock`.
     async fn execute_transaction_block(
         &self,
         ctx: &Context<'_>,
@@ -71,14 +81,17 @@ impl Mutation {
                 .extend()?,
             );
         }
-        let transaction =
-            Transaction::from_generic_sig_data(tx_data, Intent::sui_transaction(), sigs);
+        let transaction = Transaction::from_generic_sig_data(tx_data, sigs);
+        let options = SuiTransactionBlockResponseOptions::new()
+            .with_events()
+            .with_raw_input()
+            .with_raw_effects();
 
         let result = sui_sdk_client
             .quorum_driver_api()
             .execute_transaction_block(
                 transaction,
-                SuiTransactionBlockResponseOptions::default(),
+                options,
                 Some(ExecuteTransactionRequestType::WaitForEffectsCert),
             )
             .await
@@ -87,13 +100,44 @@ impl Mutation {
             .map_err(|e| Error::Internal(format!("Unable to execute transaction: {e}")))
             .extend()?;
 
+        let native: NativeTransactionEffects = bcs::from_bytes(&result.raw_effects)
+            .map_err(|e| Error::Internal(format!("Unable to deserialize transaction effects: {e}")))
+            .extend()?;
+        let tx_data: SenderSignedData = bcs::from_bytes(&result.raw_transaction)
+            .map_err(|e| Error::Internal(format!("Unable to deserialize transaction data: {e}")))
+            .extend()?;
+
+        let events = result
+            .events
+            .ok_or_else(|| {
+                Error::Internal("No events are returned from transaction execution".to_string())
+            })?
+            .data
+            .into_iter()
+            .map(|e| NativeEvent {
+                package_id: e.package_id,
+                transaction_module: e.transaction_module,
+                sender: e.sender,
+                type_: e.type_,
+                contents: e.bcs,
+            })
+            .collect();
+
         Ok(ExecutionResult {
             errors: if result.errors.is_empty() {
                 None
             } else {
                 Some(result.errors)
             },
-            digest: result.digest.to_string(),
+            effects: TransactionBlockEffects {
+                kind: TransactionBlockEffectsKind::Executed {
+                    tx_data,
+                    native,
+                    events,
+                },
+                // set to u64::MAX, as the executed transaction has not been indexed yet
+                checkpoint_viewed_at: u64::MAX,
+            },
         })
     }
 }

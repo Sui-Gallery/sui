@@ -35,6 +35,7 @@ mod checked {
     use sui_types::effects::TransactionEffects;
     use sui_types::error::{ExecutionError, ExecutionErrorKind};
     use sui_types::execution::is_certificate_denied;
+    use sui_types::execution_config_utils::to_binary_config;
     use sui_types::execution_status::ExecutionStatus;
     use sui_types::gas::GasCostSummary;
     use sui_types::gas::SuiGasStatus;
@@ -75,6 +76,7 @@ mod checked {
         certificate_deny_set: &HashSet<TransactionDigest>,
     ) -> (
         InnerTemporaryStore,
+        SuiGasStatus,
         TransactionEffects,
         Result<Mode::ExecutionResults, ExecutionError>,
     ) {
@@ -172,7 +174,7 @@ mod checked {
         );
 
         // Remove from dependencies the generic hash
-        transaction_dependencies.remove(&TransactionDigest::genesis());
+        transaction_dependencies.remove(&TransactionDigest::genesis_marker());
 
         if enable_expensive_checks && !Mode::allow_arbitrary_function_calls() {
             temporary_store
@@ -189,7 +191,12 @@ mod checked {
             &mut gas_charger,
             *epoch_id,
         );
-        (inner, effects, execution_result)
+        (
+            inner,
+            gas_charger.into_gas_status(),
+            effects,
+            execution_result,
+        )
     }
 
     pub fn execute_genesis_state_update(
@@ -599,6 +606,9 @@ mod checked {
                         EndOfEpochTransactionKind::RandomnessStateCreate => {
                             panic!("EndOfEpochTransactionKind::RandomnessStateCreate should not exist in v1");
                         }
+                        EndOfEpochTransactionKind::DenyListStateCreate => {
+                            panic!("EndOfEpochTransactionKind::CoinDenyListStateCreate should not exist in v1");
+                        }
                     }
                 }
                 unreachable!("EndOfEpochTransactionKind::ChangeEpoch should be the last transaction in the list")
@@ -822,18 +832,11 @@ mod checked {
             }
         }
 
+        let binary_config = to_binary_config(protocol_config);
         for (version, modules, dependencies) in change_epoch.system_packages.into_iter() {
-            let max_format_version = protocol_config.move_binary_format_version();
             let deserialized_modules: Vec<_> = modules
                 .iter()
-                .map(|m| {
-                    CompiledModule::deserialize_with_config(
-                        m,
-                        max_format_version,
-                        protocol_config.no_extraneous_module_bytes(),
-                    )
-                    .unwrap()
-                })
+                .map(|m| CompiledModule::deserialize_with_config(m, &binary_config).unwrap())
                 .collect();
 
             if version == OBJECT_START_VERSION {

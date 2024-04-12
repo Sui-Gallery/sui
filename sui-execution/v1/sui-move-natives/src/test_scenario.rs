@@ -175,9 +175,7 @@ pub fn end_transaction(
     find_all_wrapped_objects(
         context,
         &mut all_wrapped,
-        object_runtime_ref
-            .all_active_child_objects()
-            .map(|(id, ty, value)| (id, ty, value)),
+        object_runtime_ref.all_active_child_objects(),
     );
     // mark as "incorrect" if a shared/imm object was wrapped or is a child object
     incorrect_shared_or_imm_handling = incorrect_shared_or_imm_handling
@@ -653,6 +651,7 @@ fn find_all_wrapped_objects<'a>(
             }
         };
         let blob = value.borrow().simple_serialize(&layout).unwrap();
+        // TODO (annotated-visitor): Replace with a custom visitor.
         let move_value = MoveValue::simple_deserialize(&blob, &annotated_layout).unwrap();
         let uid = UID::type_();
         visit_structs(&move_value, |depth, tag, fields| {

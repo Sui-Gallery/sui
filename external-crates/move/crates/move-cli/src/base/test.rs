@@ -22,6 +22,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::ExitStatus,
+    sync::Arc,
 };
 // if windows
 #[cfg(target_family = "windows")]
@@ -80,30 +81,11 @@ impl Test {
         cost_table: Option<CostTable>,
     ) -> anyhow::Result<()> {
         let rerooted_path = reroot_path(path)?;
-        let Self {
-            gas_limit,
-            filter,
-            list,
-            num_threads,
-            report_statistics,
-            check_stackless_vm,
-            verbose_mode,
-            compute_coverage,
-        } = self;
-        let unit_test_config = UnitTestingConfig {
-            gas_limit,
-            filter,
-            list,
-            num_threads,
-            report_statistics,
-            check_stackless_vm,
-            verbose: verbose_mode,
-            ..UnitTestingConfig::default_with_bound(None)
-        };
+        let compute_coverage = self.compute_coverage;
         let result = run_move_unit_tests(
             &rerooted_path,
             config,
-            unit_test_config,
+            self.unit_test_config(),
             natives,
             cost_table,
             compute_coverage,
@@ -115,6 +97,29 @@ impl Test {
             std::process::exit(1)
         }
         Ok(())
+    }
+
+    pub fn unit_test_config(self) -> UnitTestingConfig {
+        let Self {
+            gas_limit,
+            filter,
+            list,
+            num_threads,
+            report_statistics,
+            check_stackless_vm,
+            verbose_mode,
+            compute_coverage: _,
+        } = self;
+        UnitTestingConfig {
+            gas_limit,
+            filter,
+            list,
+            num_threads,
+            report_statistics,
+            check_stackless_vm,
+            verbose: verbose_mode,
+            ..UnitTestingConfig::default_with_bound(None)
+        }
     }
 }
 
@@ -166,7 +171,7 @@ pub fn run_move_unit_tests<W: Write + Send>(
                 .map(|fname| {
                     let contents = fs::read_to_string(Path::new(fname.as_str())).unwrap();
                     let fhash = FileHash::new(&contents);
-                    (fhash, (*fname, contents))
+                    (fhash, (*fname, Arc::from(contents)))
                 })
                 .collect::<HashMap<_, _>>()
         })
@@ -181,16 +186,21 @@ pub fn run_move_unit_tests<W: Write + Send>(
     build_plan.compile_with_driver(writer, |compiler| {
         let (files, comments_and_compiler_res) = compiler.run::<PASS_CFGIR>().unwrap();
         let (_, compiler) =
-            diagnostics::unwrap_or_report_diagnostics(&files, comments_and_compiler_res);
+            diagnostics::unwrap_or_report_pass_diagnostics(&files, comments_and_compiler_res);
         let (mut compiler, cfgir) = compiler.into_ast();
         let compilation_env = compiler.compilation_env();
         let built_test_plan = construct_test_plan(compilation_env, Some(root_package), &cfgir);
 
         let compilation_result = compiler.at_cfgir(cfgir).build();
         let (units, warnings) =
-            diagnostics::unwrap_or_report_diagnostics(&files, compilation_result);
+            diagnostics::unwrap_or_report_pass_diagnostics(&files, compilation_result);
         diagnostics::report_warnings(&files, warnings.clone());
-        test_plan = Some((built_test_plan, files.clone(), units.clone()));
+        let named_units: Vec<_> = units
+            .clone()
+            .into_iter()
+            .map(|unit| unit.named_module)
+            .collect();
+        test_plan = Some((built_test_plan, files.clone(), named_units));
         warning_diags = Some(warnings);
         Ok((files, units))
     })?;

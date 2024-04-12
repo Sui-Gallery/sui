@@ -89,7 +89,7 @@ impl SimpleAbsIntConstructor for CustomStateChangeVerifier {
         _env: &CompilationEnv,
         _program: &'a Program,
         context: &'a CFGContext<'a>,
-        _init_state: &mut <Self::AI<'a> as SimpleAbsInt>::State,
+        _init_state: &mut State,
     ) -> Option<Self::AI<'a>> {
         let MemberName::Function(fn_name) = context.member else {
             return None;
@@ -200,7 +200,7 @@ impl SimpleDomain for State {
     type Value = Value;
 
     fn new(context: &CFGContext, mut locals: BTreeMap<Var, LocalState<Value>>) -> Self {
-        for (v, st) in &context.signature.parameters {
+        for (_mut, v, st) in &context.signature.parameters {
             if is_local_obj_with_store(st, context) {
                 let local_state = locals.get_mut(v).unwrap();
                 if let LocalState::Available(loc, _) = local_state {

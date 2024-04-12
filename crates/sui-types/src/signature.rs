@@ -4,7 +4,6 @@
 use crate::committee::EpochId;
 use crate::crypto::{
     CompressedSignature, PublicKey, SignatureScheme, SuiSignature, ZkLoginAuthenticatorAsBytes,
-    ZkLoginPublicIdentifier,
 };
 use crate::error::SuiError;
 use crate::multisig_legacy::MultiSigLegacy;
@@ -33,6 +32,7 @@ pub struct VerifyParams {
     pub zk_login_env: ZkLoginEnv,
     pub verify_legacy_zklogin_address: bool,
     pub accept_zklogin_in_multisig: bool,
+    pub zklogin_max_epoch_upper_bound_delta: Option<u64>,
 }
 
 impl VerifyParams {
@@ -42,6 +42,7 @@ impl VerifyParams {
         zk_login_env: ZkLoginEnv,
         verify_legacy_zklogin_address: bool,
         accept_zklogin_in_multisig: bool,
+        zklogin_max_epoch_upper_bound_delta: Option<u64>,
     ) -> Self {
         Self {
             oidc_provider_jwks,
@@ -49,6 +50,7 @@ impl VerifyParams {
             zk_login_env,
             verify_legacy_zklogin_address,
             accept_zklogin_in_multisig,
+            zklogin_max_epoch_upper_bound_delta,
         }
     }
 }
@@ -56,15 +58,17 @@ impl VerifyParams {
 /// A lightweight trait that all members of [enum GenericSignature] implement.
 #[enum_dispatch]
 pub trait AuthenticatorTrait {
-    fn check_author(&self) -> bool;
-    fn verify_user_authenticator_epoch(&self, epoch: EpochId) -> SuiResult;
+    fn verify_user_authenticator_epoch(
+        &self,
+        epoch: EpochId,
+        max_epoch_upper_bound_delta: Option<u64>,
+    ) -> SuiResult;
 
     fn verify_claims<T>(
         &self,
         value: &IntentMessage<T>,
         author: SuiAddress,
         aux_verify_data: &VerifyParams,
-        check_author: bool,
     ) -> SuiResult
     where
         T: Serialize;
@@ -74,16 +78,18 @@ pub trait AuthenticatorTrait {
         value: &IntentMessage<T>,
         author: SuiAddress,
         epoch: Option<EpochId>,
-        aux_verify_data: &VerifyParams,
+        verify_params: &VerifyParams,
     ) -> SuiResult
     where
         T: Serialize,
     {
         if let Some(epoch) = epoch {
-            self.verify_user_authenticator_epoch(epoch)?;
+            self.verify_user_authenticator_epoch(
+                epoch,
+                verify_params.zklogin_max_epoch_upper_bound_delta,
+            )?;
         }
-        // when invoked from verify_authenticator, always check author.
-        self.verify_claims(value, author, aux_verify_data, true)
+        self.verify_claims(value, author, verify_params)
     }
 
     fn verify_uncached_checks<T>(
@@ -91,7 +97,6 @@ pub trait AuthenticatorTrait {
         value: &IntentMessage<T>,
         author: SuiAddress,
         aux_verify_data: &VerifyParams,
-        check_author: bool,
     ) -> SuiResult
     where
         T: Serialize;
@@ -129,7 +134,7 @@ impl GenericSignature {
                     SignatureScheme::ED25519 => Ok(CompressedSignature::Ed25519(
                         (&Ed25519Signature::from_bytes(bytes).map_err(|_| {
                             SuiError::InvalidSignature {
-                                error: "Cannot parse sig".to_string(),
+                                error: "Cannot parse ed25519 sig".to_string(),
                             }
                         })?)
                             .into(),
@@ -137,7 +142,7 @@ impl GenericSignature {
                     SignatureScheme::Secp256k1 => Ok(CompressedSignature::Secp256k1(
                         (&Secp256k1Signature::from_bytes(bytes).map_err(|_| {
                             SuiError::InvalidSignature {
-                                error: "Cannot parse sig".to_string(),
+                                error: "Cannot parse secp256k1 sig".to_string(),
                             }
                         })?)
                             .into(),
@@ -145,7 +150,7 @@ impl GenericSignature {
                     SignatureScheme::Secp256r1 => Ok(CompressedSignature::Secp256r1(
                         (&Secp256r1Signature::from_bytes(bytes).map_err(|_| {
                             SuiError::InvalidSignature {
-                                error: "Cannot parse sig".to_string(),
+                                error: "Cannot parse secp256r1 sig".to_string(),
                             }
                         })?)
                             .into(),
@@ -173,19 +178,19 @@ impl GenericSignature {
                 match s.scheme() {
                     SignatureScheme::ED25519 => Ok(PublicKey::Ed25519(
                         (&Ed25519PublicKey::from_bytes(bytes).map_err(|_| {
-                            SuiError::KeyConversionError("Cannot parse pk".to_string())
+                            SuiError::KeyConversionError("Cannot parse ed25519 pk".to_string())
                         })?)
                             .into(),
                     )),
                     SignatureScheme::Secp256k1 => Ok(PublicKey::Secp256k1(
                         (&Secp256k1PublicKey::from_bytes(bytes).map_err(|_| {
-                            SuiError::KeyConversionError("Cannot parse pk".to_string())
+                            SuiError::KeyConversionError("Cannot parse secp256k1 pk".to_string())
                         })?)
                             .into(),
                     )),
                     SignatureScheme::Secp256r1 => Ok(PublicKey::Secp256r1(
                         (&Secp256r1PublicKey::from_bytes(bytes).map_err(|_| {
-                            SuiError::KeyConversionError("Cannot parse pk".to_string())
+                            SuiError::KeyConversionError("Cannot parse secp256r1 pk".to_string())
                         })?)
                             .into(),
                     )),
@@ -194,9 +199,7 @@ impl GenericSignature {
                     }),
                 }
             }
-            GenericSignature::ZkLoginAuthenticator(s) => Ok(PublicKey::ZkLogin(
-                ZkLoginPublicIdentifier::new(s.get_iss(), s.get_address_seed())?,
-            )),
+            GenericSignature::ZkLoginAuthenticator(s) => s.get_pk(),
             _ => Err(SuiError::UnsupportedFeatureError {
                 error: "Unsupported signature scheme".to_string(),
             }),
@@ -285,10 +288,7 @@ impl<'de> ::serde::Deserialize<'de> for GenericSignature {
 
 /// This ports the wrapper trait to the verify_secure defined on [enum Signature].
 impl AuthenticatorTrait for Signature {
-    fn check_author(&self) -> bool {
-        true
-    }
-    fn verify_user_authenticator_epoch(&self, _: EpochId) -> SuiResult {
+    fn verify_user_authenticator_epoch(&self, _: EpochId, _: Option<EpochId>) -> SuiResult {
         Ok(())
     }
     fn verify_uncached_checks<T>(
@@ -296,7 +296,6 @@ impl AuthenticatorTrait for Signature {
         _value: &IntentMessage<T>,
         _author: SuiAddress,
         _aux_verify_data: &VerifyParams,
-        _check_author: bool,
     ) -> SuiResult
     where
         T: Serialize,
@@ -309,7 +308,6 @@ impl AuthenticatorTrait for Signature {
         value: &IntentMessage<T>,
         author: SuiAddress,
         _aux_verify_data: &VerifyParams,
-        _check_author: bool,
     ) -> SuiResult
     where
         T: Serialize,

@@ -2,10 +2,7 @@
 // Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    location::*,
-    spec_language_ast::{Condition, Invariant, SyntheticDefinition},
-};
+use crate::location::*;
 use move_core_types::{
     account_address::AccountAddress, identifier::Identifier, language_storage::ModuleId,
     runtime_value::MoveValue,
@@ -68,8 +65,6 @@ pub struct ModuleDefinition {
     pub constants: Vec<Constant>,
     /// the procedure that the module defines
     pub functions: Vec<(FunctionName, Function)>,
-    /// the synthetic, specification variables the module defines.
-    pub synthetics: Vec<SyntheticDefinition>,
 }
 
 /// Explicitly given dependency
@@ -229,8 +224,6 @@ pub struct StructDefinition_ {
     pub type_formals: Vec<StructTypeParameter>,
     /// the fields each instance has
     pub fields: StructDefinitionFields,
-    /// the invariants for this struct
-    pub invariants: Vec<Invariant>,
 }
 /// The type of a StructDefinition along with its source location information
 pub type StructDefinition = Spanned<StructDefinition_>;
@@ -272,6 +265,8 @@ pub struct Constant {
     pub signature: Type,
     /// The constant's value
     pub value: MoveValue,
+    /// Whether this constant appears as an error constant in the source code.
+    pub is_error_constant: bool,
 }
 
 //**************************************************************************************************
@@ -343,8 +338,6 @@ pub struct Function_ {
     pub is_entry: bool,
     /// The type signature
     pub signature: FunctionSignature,
-    /// List of specifications for the Move prover (experimental)
-    pub specifications: Vec<Condition>,
     /// The code for the procedure
     pub body: FunctionBody,
 }
@@ -668,6 +661,10 @@ pub enum Bytecode_ {
     VecPopBack(Type),
     VecUnpack(Type, u64),
     VecSwap(Type),
+    ErrorConstant {
+        line_number: u16,
+        constant: Option<ConstantName>,
+    },
 }
 pub type Bytecode = Spanned<Bytecode_>;
 
@@ -736,7 +733,6 @@ impl ModuleDefinition {
         structs: Vec<StructDefinition>,
         constants: Vec<Constant>,
         functions: Vec<(FunctionName, Function)>,
-        synthetics: Vec<SyntheticDefinition>,
     ) -> Self {
         ModuleDefinition {
             loc,
@@ -747,7 +743,6 @@ impl ModuleDefinition {
             structs,
             constants,
             functions,
-            synthetics,
         }
     }
 
@@ -830,14 +825,12 @@ impl StructDefinition_ {
         name: Symbol,
         type_formals: Vec<StructTypeParameter>,
         fields: Fields<Type>,
-        invariants: Vec<Invariant>,
     ) -> Self {
         StructDefinition_ {
             abilities,
             name: StructName(name),
             type_formals,
             fields: StructDefinitionFields::Move { fields },
-            invariants,
         }
     }
 
@@ -853,7 +846,6 @@ impl StructDefinition_ {
             name: StructName(name),
             type_formals,
             fields: StructDefinitionFields::Native,
-            invariants: vec![],
         }
     }
 }
@@ -882,7 +874,6 @@ impl Function_ {
         formals: Vec<(Var, Type)>,
         return_type: Vec<Type>,
         type_parameters: Vec<(TypeVar, BTreeSet<Ability>)>,
-        specifications: Vec<Condition>,
         body: FunctionBody,
     ) -> Self {
         let signature = FunctionSignature::new(formals, return_type, type_parameters);
@@ -890,7 +881,6 @@ impl Function_ {
             visibility,
             is_entry,
             signature,
-            specifications,
             body,
         }
     }
@@ -1638,6 +1628,20 @@ impl fmt::Display for Bytecode_ {
             Bytecode_::VecPopBack(ty) => write!(f, "VecPopBack {}", ty),
             Bytecode_::VecUnpack(ty, n) => write!(f, "VecUnpack {} {}", ty, n),
             Bytecode_::VecSwap(ty) => write!(f, "VecSwap {}", ty),
+            Bytecode_::ErrorConstant {
+                line_number,
+                constant,
+            } => {
+                write!(
+                    f,
+                    "ErrorConstant {}:{}",
+                    line_number,
+                    constant
+                        .as_ref()
+                        .map(|s| s.0.to_string())
+                        .unwrap_or("<NONE>".to_owned())
+                )
+            }
         }
     }
 }

@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//# init --addresses Test=0x0 --accounts A --simulator
+//# init --protocol-version 39 --addresses Test=0x0 --accounts A --simulator
 
 //# run-graphql
 
@@ -16,7 +16,7 @@ fragment Modules on Object  @deprecated {
     asMovePackage {
         module(name: "m") {
             name
-            package { asObject { address } }
+            package { address }
 
             fileFormatVersion
             bytes
@@ -26,15 +26,41 @@ fragment Modules on Object  @deprecated {
 }
 
 {
-    transactionBlockConnection(last: 1) {
+    transactionBlocks(last: 1) {
         nodes {
             effects {
                 objectChanges {
+                  nodes {
                     outputState {
                         ...Modules
                     }
+                  }
                 }
             }
         }
     }
+}
+
+//# run-graphql
+
+{
+  chainIdentifier @skip(if: true)
+}
+
+//# run-graphql
+
+{
+  chainIdentifier @skip(if: false)
+}
+
+//# run-graphql
+
+{
+  chainIdentifier @include(if: true)
+}
+
+//# run-graphql
+
+{
+  chainIdentifier @include(if: false)
 }

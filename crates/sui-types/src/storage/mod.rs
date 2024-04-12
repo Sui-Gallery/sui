@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod error;
 mod object_store_trait;
 mod read_store;
 mod shared_in_memory_store;
@@ -11,7 +12,7 @@ use crate::committee::EpochId;
 use crate::error::SuiError;
 use crate::execution::{DynamicallyLoadedObjectMetadata, ExecutionResults};
 use crate::move_package::MovePackage;
-use crate::transaction::{SenderSignedData, TransactionDataAPI};
+use crate::transaction::{SenderSignedData, TransactionDataAPI, TransactionKey};
 use crate::{
     base_types::{ObjectID, ObjectRef, SequenceNumber},
     error::SuiResult,
@@ -187,6 +188,11 @@ pub trait Storage {
     fn save_loaded_runtime_objects(
         &mut self,
         loaded_runtime_objects: BTreeMap<ObjectID, DynamicallyLoadedObjectMetadata>,
+    );
+
+    fn save_wrapped_object_containers(
+        &mut self,
+        wrapped_object_containers: BTreeMap<ObjectID, ObjectID>,
     );
 }
 
@@ -451,6 +457,17 @@ impl From<&ObjectRef> for ObjectKey {
     }
 }
 
+pub enum ObjectOrTombstone {
+    Object(Object),
+    Tombstone(ObjectRef),
+}
+
+impl From<Object> for ObjectOrTombstone {
+    fn from(object: Object) -> Self {
+        ObjectOrTombstone::Object(object)
+    }
+}
+
 /// Fetch the `ObjectKey`s (IDs and versions) for non-shared input objects.  Includes owned,
 /// and immutable objects as well as the gas objects, but not move packages or shared objects.
 pub fn transaction_input_object_keys(tx: &SenderSignedData) -> SuiResult<Vec<ObjectKey>> {
@@ -507,6 +524,6 @@ where
 pub trait GetSharedLocks: Send + Sync {
     fn get_shared_locks(
         &self,
-        transaction_digest: &TransactionDigest,
+        key: &TransactionKey,
     ) -> Result<Vec<(ObjectID, SequenceNumber)>, SuiError>;
 }

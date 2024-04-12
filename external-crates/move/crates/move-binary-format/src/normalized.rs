@@ -283,7 +283,8 @@ impl Type {
                     type_arguments: Vec::new(),
                 }
             }
-            StructInstantiation(shi, type_actuals) => {
+            StructInstantiation(struct_inst) => {
+                let (shi, type_actuals) = &**struct_inst;
                 let s_handle = m.struct_handle_at(*shi);
                 let m_handle = m.module_handle_at(s_handle.module);
                 Type::Struct {
@@ -591,13 +592,13 @@ impl Bytecode {
             FB::Branch(x) => B::Branch(*x),
             FB::LdU8(x) => B::LdU8(*x),
             FB::LdU64(x) => B::LdU64(*x),
-            FB::LdU128(x) => B::LdU128(*x),
+            FB::LdU128(x) => B::LdU128(**x),
             FB::CopyLoc(x) => B::CopyLoc(*x),
             FB::MoveLoc(x) => B::MoveLoc(*x),
             FB::StLoc(x) => B::StLoc(*x),
             FB::LdU16(x) => B::LdU16(*x),
             FB::LdU32(x) => B::LdU32(*x),
-            FB::LdU256(x) => B::LdU256(*x),
+            FB::LdU256(x) => B::LdU256(**x),
             FB::LdConst(const_idx) => B::LdConst(Constant::new(m, m.constant_at(*const_idx))),
             FB::Call(fh_idx) => B::Call(FunctionRef::from_idx(m, fh_idx)),
             FB::CallGeneric(fhi_idx) => {
@@ -625,20 +626,32 @@ impl Bytecode {
             FB::ImmBorrowFieldGeneric(fhi_idx) => {
                 B::ImmBorrowFieldGeneric(field_instantiation(m, fhi_idx))
             }
-            FB::MutBorrowGlobalDeprecated(s_idx) => B::MutBorrowGlobalDeprecated(m.struct_name(*s_idx).to_owned()),
+            FB::MutBorrowGlobalDeprecated(s_idx) => {
+                B::MutBorrowGlobalDeprecated(m.struct_name(*s_idx).to_owned())
+            }
             FB::MutBorrowGlobalGenericDeprecated(si_idx) => {
                 B::MutBorrowGlobalGenericDeprecated(struct_instantiation(m, si_idx))
             }
-            FB::ImmBorrowGlobalDeprecated(s_idx) => B::ImmBorrowGlobalDeprecated(m.struct_name(*s_idx).to_owned()),
+            FB::ImmBorrowGlobalDeprecated(s_idx) => {
+                B::ImmBorrowGlobalDeprecated(m.struct_name(*s_idx).to_owned())
+            }
             FB::ImmBorrowGlobalGenericDeprecated(si_idx) => {
                 B::ImmBorrowGlobalGenericDeprecated(struct_instantiation(m, si_idx))
             }
             FB::ExistsDeprecated(s_idx) => B::ExistsDeprecated(m.struct_name(*s_idx).to_owned()),
-            FB::ExistsGenericDeprecated(si_idx) => B::ExistsGenericDeprecated(struct_instantiation(m, si_idx)),
-            FB::MoveFromDeprecated(s_idx) => B::MoveFromDeprecated(m.struct_name(*s_idx).to_owned()),
-            FB::MoveFromGenericDeprecated(si_idx) => B::MoveFromGenericDeprecated(struct_instantiation(m, si_idx)),
+            FB::ExistsGenericDeprecated(si_idx) => {
+                B::ExistsGenericDeprecated(struct_instantiation(m, si_idx))
+            }
+            FB::MoveFromDeprecated(s_idx) => {
+                B::MoveFromDeprecated(m.struct_name(*s_idx).to_owned())
+            }
+            FB::MoveFromGenericDeprecated(si_idx) => {
+                B::MoveFromGenericDeprecated(struct_instantiation(m, si_idx))
+            }
             FB::MoveToDeprecated(s_idx) => B::MoveToDeprecated(m.struct_name(*s_idx).to_owned()),
-            FB::MoveToGenericDeprecated(si_idx) => B::MoveToGenericDeprecated(struct_instantiation(m, si_idx)),
+            FB::MoveToGenericDeprecated(si_idx) => {
+                B::MoveToGenericDeprecated(struct_instantiation(m, si_idx))
+            }
             FB::VecPack(sig_idx, len) => B::VecPack(signature_to_single_type(m, sig_idx), *len),
             FB::VecLen(sig_idx) => B::VecLen(signature_to_single_type(m, sig_idx)),
             FB::VecImmBorrow(sig_idx) => B::VecImmBorrow(signature_to_single_type(m, sig_idx)),

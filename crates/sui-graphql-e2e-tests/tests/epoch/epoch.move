@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//# init --simulator --accounts C
+//# init --protocol-version 39 --simulator --accounts C
 
 
 // TODO: Short term hack to get around indexer epoch issue
@@ -35,6 +35,13 @@
   epoch(id: 2) {
     validatorSet {
       totalStake
+      activeValidators {
+        nodes {
+          name
+        }
+      }
+      validatorCandidatesSize
+      inactivePoolsId
     }
     totalGasFees
     totalStakeRewards
@@ -43,5 +50,13 @@
     fundInflow
     fundOutflow
     netInflow
+    transactionBlocks {
+      nodes {
+        kind {
+          __typename
+        }
+        digest
+      }
+    }
   }
 }

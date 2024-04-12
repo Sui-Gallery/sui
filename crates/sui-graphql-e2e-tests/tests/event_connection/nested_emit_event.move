@@ -5,13 +5,13 @@
 // The emitting module is where the entrypoint function is defined -
 // in other words, the function called by a programmable transaction block.
 
-//# init --addresses Test=0x0 --accounts A --simulator
+//# init --protocol-version 39 --addresses Test=0x0 --accounts A --simulator
 
 //# publish
 module Test::M1 {
     use sui::event;
 
-    struct EventA has copy, drop {
+    public struct EventA has copy, drop {
         new_value: u64
     }
 
@@ -40,11 +40,9 @@ module Test::M3 {
 
 //# create-checkpoint
 
-//# run-graphql --variables A
+//# run-graphql
 {
-  eventConnection(
-    filter: {sender: $A}
-  ) {
+  events(filter: {sender: "@{A}"}) {
     nodes {
       sendingModule {
         name
@@ -52,7 +50,7 @@ module Test::M3 {
       type {
         repr
       }
-      senders {
+      sender {
         address
       }
       json
@@ -61,11 +59,9 @@ module Test::M3 {
   }
 }
 
-//# run-graphql --variables A Test
+//# run-graphql
 {
-  eventConnection(
-    filter: {sender: $A, emittingPackage: $Test}
-  ) {
+  events(filter: {sender: "@{A}", emittingModule: "@{Test}"}) {
     nodes {
       sendingModule {
         name
@@ -73,7 +69,7 @@ module Test::M3 {
       type {
         repr
       }
-      senders {
+      sender {
         address
       }
       json
@@ -82,11 +78,9 @@ module Test::M3 {
   }
 }
 
-//# run-graphql --variables A Test
+//# run-graphql
 {
-  eventConnection(
-    filter: {sender: $A, emittingPackage: $Test, emittingModule: "M1"}
-  ) {
+  events(filter: {sender: "@{A}", emittingModule: "@{Test}::M1"}) {
     nodes {
       sendingModule {
         name
@@ -94,7 +88,7 @@ module Test::M3 {
       type {
         repr
       }
-      senders {
+      sender {
         address
       }
       json
@@ -103,11 +97,9 @@ module Test::M3 {
   }
 }
 
-//# run-graphql --variables A Test
+//# run-graphql
 {
-  eventConnection(
-    filter: {sender: $A, emittingPackage: $Test, emittingModule: "M2"}
-  ) {
+  events(filter: {sender: "@{A}", emittingModule: "@{Test}::M2"}) {
     nodes {
       sendingModule {
         name
@@ -115,7 +107,7 @@ module Test::M3 {
       type {
         repr
       }
-      senders {
+      sender {
         address
       }
       json
@@ -124,11 +116,9 @@ module Test::M3 {
   }
 }
 
-//# run-graphql --variables A Test
+//# run-graphql
 {
-  eventConnection(
-    filter: {sender: $A, emittingPackage: $Test, emittingModule: "M3"}
-  ) {
+  events(filter: {sender: "@{A}", emittingModule: "@{Test}::M3"}) {
     nodes {
       sendingModule {
         name
@@ -136,7 +126,7 @@ module Test::M3 {
       type {
         repr
       }
-      senders {
+      sender {
         address
       }
       json

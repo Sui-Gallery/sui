@@ -11,13 +11,13 @@ const config = {
 	chat: {
 		link: 'https://discord.com/invite/Sui',
 	},
-	docsRepositoryBase: 'https://github.com/MystenLabs/sui/tree/main/sdk/docs/pages',
+	docsRepositoryBase: 'https://github.com/MystenLabs/sui/tree/main/sdk/docs',
 	footer: {
-		text: 'Copyright © 2023, Mysten Labs, Inc.',
+		text: `Copyright © ${new Date().getFullYear()}, Mysten Labs, Inc.`,
 	},
 	head: (
 		<>
-			<meta name="google-site-verification" content="vRwZ3B3JxeegVwxa01XL4edDasP3pT8jPxEiBqqEaqw" />
+			<meta name="google-site-verification" content="T-2HWJAKh8s63o9KFxCFXg5MON_NGLJG76KJzr_Hp0A" />
 			<meta httpEquiv="Content-Language" content="en" />
 		</>
 	),

@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//# init --addresses P0=0x0 P1=0x0 --accounts A --simulator
+//# init --protocol-version 39 --addresses P0=0x0 P1=0x0 --accounts A --simulator
 
 //# run-graphql
 
@@ -52,7 +52,7 @@
 //# publish --upgradeable --sender A
 
 module P0::m {
-    struct S has copy, drop { x: u64 }
+    public struct S has copy, drop { x: u64 }
 }
 
 //# create-checkpoint
@@ -86,12 +86,14 @@ fragment Structs on Object {
 }
 
 {
-    transactionBlockConnection(last: 1) {
+    transactionBlocks(last: 1) {
         nodes {
             effects {
                 objectChanges {
-                    outputState {
-                        ...Structs
+                    nodes {
+                        outputState {
+                            ...Structs
+                        }
                     }
                 }
             }
@@ -102,9 +104,9 @@ fragment Structs on Object {
 //# upgrade --package P0 --upgrade-capability 2,1 --sender A
 
 module P1::m {
-    struct S has copy, drop { x: u64 }
-    struct T<U: drop> { y: u64, s: S, u: U }
-    struct V { t: T<S> }
+    public struct S has copy, drop { x: u64 }
+    public struct T<U: drop> { y: u64, s: S, u: U }
+    public struct V { t: T<S> }
 }
 
 //# create-checkpoint
@@ -115,7 +117,7 @@ module P1::m {
 # see the IDs of types as they appear in the new package -- they will
 # all be the runtime ID.
 fragment FullStruct on MoveStruct {
-    module { package { asObject { address } } }
+    module { package { address } }
     name
     abilities
     typeParameters {
@@ -153,12 +155,14 @@ fragment Structs on Object {
 }
 
 {
-    transactionBlockConnection(last: 1) {
+    transactionBlocks(last: 1) {
         nodes {
             effects {
                 objectChanges {
-                    outputState {
-                        ...Structs
+                    nodes {
+                        outputState {
+                            ...Structs
+                        }
                     }
                 }
             }
@@ -168,7 +172,7 @@ fragment Structs on Object {
 
 //# run-graphql
 
-# But we can still confirm that we can roundtrip the `T` struct from
+# But we can still confirm that we can roundtrip the `T` public struct from
 # its own module, but cannot reach `T` from `S`'s defining module.
 
 fragment ReachT on MoveStruct {
@@ -188,12 +192,14 @@ fragment Structs on Object {
 }
 
 {
-    transactionBlockConnection(last: 1) {
+    transactionBlocks(last: 1) {
         nodes {
             effects {
                 objectChanges {
-                    outputState {
-                        ...Structs
+                    nodes {
+                        outputState {
+                            ...Structs
+                        }
                     }
                 }
             }
@@ -202,13 +208,13 @@ fragment Structs on Object {
 }
 
 
-//# run-graphql
+//# run-graphql --cursors {"n":"Coin","c":2} {"n":"TreasuryCap","c":2}
 {
     object(address: "0x2") {
         asMovePackage {
             module(name: "coin") {
                 # Get all the types defined in coin
-                all: structConnection {
+                all: structs {
                     nodes {
                         name
                         fields {
@@ -223,14 +229,20 @@ fragment Structs on Object {
                 # exclusive lower bound, so this query should indicate
                 # there is a previous page, and not include `Coin` in
                 # the output.
-                after: structConnection(after: "Coin") {
-                    nodes { name }
+                after: structs(after: "@{cursor_0}") {
+                    edges {
+                        cursor
+                        node { name }
+                    }
                     pageInfo { hasNextPage hasPreviousPage }
                 }
 
                 # Before: Similar to `after` but at the end of the range.
-                before: structConnection(before: "TreasuryCap") {
-                    nodes { name }
+                before: structs(before: "@{cursor_1}") {
+                    edges {
+                        cursor
+                        node { name }
+                    }
                     pageInfo { hasNextPage hasPreviousPage }
                 }
             }
@@ -238,9 +250,12 @@ fragment Structs on Object {
     }
 }
 
-//# run-graphql
+//# run-graphql --cursors {"n":"Coin","c":2} {"n":"TreasuryCap","c":2}
 fragment NodeNames on MoveStructConnection {
-    nodes { name }
+    edges {
+        cursor
+        node { name }
+    }
     pageInfo { hasNextPage hasPreviousPage }
 }
 
@@ -250,33 +265,33 @@ fragment NodeNames on MoveStructConnection {
             module(name: "coin") {
                 # Limit the number of elements in the page using
                 # `first` and skip elements using `after`.
-                prefix: structConnection(after: "Coin", first: 2) {
+                prefix: structs(after: "@{cursor_0}", first: 2) {
                     ...NodeNames
                 }
 
                 # Limit has no effect because it matches the total
                 # number of entries in the page.
-                prefixAll: structConnection(after: "Coin", first: 3) {
+                prefixAll: structs(after: "@{cursor_0}", first: 3) {
                     ...NodeNames
                 }
 
                 # Limit also has no effect, because it exceeds the
                 # total number of entries in the page.
-                prefixExcess: structConnection(after: "Coin", first: 100) {
+                prefixExcess: structs(after: "@{cursor_0}", first: 20) {
                     ...NodeNames
                 }
 
                 # Remaining tests are similar to after/first but with
                 # before/last.
-                suffix: structConnection(before: "TreasuryCap", last: 2) {
+                suffix: structs(before: "@{cursor_1}", last: 2) {
                     ...NodeNames
                 }
 
-                suffixAll: structConnection(before: "TreasuryCap", last: 3) {
+                suffixAll: structs(before: "@{cursor_1}", last: 3) {
                     ...NodeNames
                 }
 
-                suffixExcess: structConnection(before: "TreasuryCap", last: 100) {
+                suffixExcess: structs(before: "@{cursor_1}", last: 20) {
                     ...NodeNames
                 }
             }

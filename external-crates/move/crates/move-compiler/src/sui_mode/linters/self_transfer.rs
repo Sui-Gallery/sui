@@ -80,13 +80,27 @@ impl SimpleAbsIntConstructor for SelfTransferVerifier {
 
     fn new<'a>(
         _env: &CompilationEnv,
-        _program: &'a Program,
+        program: &'a Program,
         context: &'a CFGContext<'a>,
         _init_state: &mut <Self::AI<'a> as SimpleAbsInt>::State,
     ) -> Option<Self::AI<'a>> {
         let MemberName::Function(name) = context.member else {
             return None;
         };
+
+        if context.entry.is_some()
+            || context.attributes.is_test_or_test_only()
+            || program
+                .modules
+                .get(&context.module)
+                .unwrap()
+                .attributes
+                .is_test_or_test_only()
+        {
+            // Cannot return objects from entry
+            // No need to check test functions
+            return None;
+        }
 
         if name.value.as_str() == "init" {
             // do not lint module initializers, since they do not have the option of returning
@@ -175,7 +189,7 @@ impl SimpleDomain for State {
     type Value = Value;
 
     fn new(context: &CFGContext, mut locals: BTreeMap<Var, LocalState<Value>>) -> Self {
-        for (v, _) in &context.signature.parameters {
+        for (_mut, v, _) in &context.signature.parameters {
             let local_state = locals.get_mut(v).unwrap();
             if let LocalState::Available(loc, _) = local_state {
                 *local_state = LocalState::Available(*loc, Value::Other);

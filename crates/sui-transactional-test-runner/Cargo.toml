@@ -15,10 +15,13 @@ clap.workspace = true
 eyre.workspace = true
 once_cell.workspace = true
 rand.workspace = true
+regex.workspace = true
 tempfile.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 serde_json.workspace = true
+futures.workspace = true
+criterion.workspace = true
 
 fastcrypto.workspace = true
 move-binary-format.workspace = true
@@ -45,11 +48,11 @@ sui-protocol-config.workspace = true
 sui-types = { workspace = true, features = ["test-utils"]}
 sui-json-rpc-types.workspace = true
 sui-json-rpc.workspace = true
+sui-json-rpc-api.workspace = true
 sui-framework-snapshot.workspace = true
 sui-storage.workspace = true
 typed-store.workspace = true
 typed-store-derive.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(msim)'.dependencies]
 msim.workspace = true

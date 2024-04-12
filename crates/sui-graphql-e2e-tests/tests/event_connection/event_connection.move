@@ -9,24 +9,21 @@
 // Verifies correct event when filtered for Test::M1::EventB
 // Verifies error when filtered on sender, package, module and event type with generics and <
 
-//# init --addresses Test=0x0 --accounts A B --simulator
+//# init --protocol-version 39 --addresses Test=0x0 --accounts A B --simulator
 
 //# publish
 module Test::M1 {
     use sui::event;
-    use sui::object::{Self, UID};
-    use sui::tx_context::TxContext;
-    use sui::transfer;
 
-    struct EventA has copy, drop {
+    public struct EventA has copy, drop {
         new_value: u64
     }
 
-    struct EventB<phantom T> has copy, drop {
+    public struct EventB<phantom T> has copy, drop {
         new_value: u64
     }
 
-    struct Object has key, store {
+    public struct Object has key, store {
         id: UID,
         value: u64,
     }
@@ -51,19 +48,16 @@ module Test::M1 {
 
 module Test::M2 {
     use sui::event;
-    use sui::object::{Self, UID};
-    use sui::tx_context::TxContext;
-    use sui::transfer;
 
-    struct EventA has copy, drop {
+    public struct EventA has copy, drop {
         new_value: u64
     }
 
-    struct EventB<phantom T> has copy, drop {
+    public struct EventB<phantom T> has copy, drop {
         new_value: u64
     }
 
-    struct Object has key, store {
+    public struct Object has key, store {
         id: UID,
         value: u64,
     }
@@ -100,128 +94,178 @@ module Test::M2 {
 
 //# create-checkpoint
 
-//# run-graphql --variables A
+//# run-graphql
 {
-  eventConnection(
-    filter: {sender: $A}
-  ) {
-    nodes {
-      sendingModule {
-        name
+  events(filter: {sender: "@{A}"}) {
+    edges {
+      cursor
+      node {
+        sendingModule {
+          name
+        }
+        type {
+          repr
+        }
+        sender {
+          address
+        }
+        json
+        bcs
       }
-      type {
-        repr
-      }
-      senders {
-        address
-      }
-      json
-      bcs
     }
   }
 }
 
-//# run-graphql --variables A Test
+//# run-graphql
 {
-  eventConnection(
-    filter: {sender: $A, eventPackage: $Test}
-  ) {
-    nodes {
-      sendingModule {
-        name
+  events(filter: {sender: "@{A}", eventType: "@{Test}"}) {
+    edges {
+      cursor
+      node {
+        sendingModule {
+          name
+        }
+        type {
+          repr
+        }
+        sender {
+          address
+        }
+        json
+        bcs
       }
-      type {
-        repr
-      }
-      senders {
-        address
-      }
-      json
-      bcs
     }
   }
 }
 
-//# run-graphql --variables A Test
+//# run-graphql
 {
-  eventConnection(
-    filter: {sender: $A, eventPackage: $Test, eventModule: "M1"}
-  ) {
-    nodes {
-      sendingModule {
-        name
+  events(filter: {sender: "@{A}", eventType: "@{Test}::M1"}) {
+    edges {
+      cursor
+      node {
+        sendingModule {
+          name
+        }
+        type {
+          repr
+        }
+        sender {
+          address
+        }
+        json
+        bcs
       }
-      type {
-        repr
-      }
-      senders {
-        address
-      }
-      json
-      bcs
     }
   }
 }
 
-//# run-graphql --variables A Test
+//# run-graphql
 {
-  eventConnection(
-    filter: {sender: $A, eventPackage: $Test, eventModule: "M1", eventType: "EventA"}
-  ) {
-    nodes {
-      sendingModule {
-        name
+  events(filter: {sender: "@{A}", eventType: "@{Test}::M1::EventA"}) {
+    edges {
+      cursor
+      node {
+        sendingModule {
+          name
+        }
+        type {
+          repr
+        }
+        sender {
+          address
+        }
+        json
+        bcs
       }
-      type {
-        repr
-      }
-      senders {
-        address
-      }
-      json
-      bcs
     }
   }
 }
 
-//# run-graphql --variables A Test
+//# run-graphql
 {
-  eventConnection(
-    filter: {sender: $A, eventPackage: $Test, eventModule: "M1", eventType: "EventB"}
-  ) {
-    nodes {
-      sendingModule {
-        name
+  events(filter: {sender: "@{A}", eventType: "@{Test}::M1::EventB"}) {
+    edges {
+      cursor
+      node {
+        sendingModule {
+          name
+        }
+        type {
+          repr
+        }
+        sender {
+          address
+        }
+        json
+        bcs
       }
-      type {
-        repr
-      }
-      senders {
-        address
-      }
-      json
-      bcs
     }
   }
 }
 
-//# run-graphql --variables A Test
+//# run-graphql
 {
-  eventConnection(
-    filter: {sender: $A, eventPackage: $Test, eventModule: "M1", eventType: "EventB<"}
-  ) {
-    nodes {
-      sendingModule {
-        name
+  events(filter: {sender: "@{A}", eventType: "@{Test}::M1::EventB<"}) {
+    edges {
+      cursor
+      node {
+        sendingModule {
+          name
+        }
+        type {
+          repr
+        }
+        sender {
+          address
+        }
+        json
+        bcs
       }
-      type {
-        repr
+    }
+  }
+}
+
+//# run-graphql
+{
+  events(filter: {sender: "@{A}", eventType: "::M1"}) {
+    edges {
+      cursor
+      node {
+        sendingModule {
+          name
+        }
+        type {
+          repr
+        }
+        sender {
+          address
+        }
+        json
+        bcs
       }
-      senders {
-        address
+    }
+  }
+}
+
+//# run-graphql
+{
+  events(filter: {sender: "@{A}", eventType: "@{Test}::"}) {
+    edges {
+      cursor
+      node {
+        sendingModule {
+          name
+        }
+        type {
+          repr
+        }
+        sender {
+          address
+        }
+        json
+        bcs
       }
-      json
-      bcs
     }
   }
 }

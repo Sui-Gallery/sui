@@ -83,14 +83,6 @@ struct Args {
     /// if we should run indexer
     #[clap(long)]
     pub with_indexer: bool,
-
-    /// TODO(gegao): remove this after indexer migration is complete.
-    #[clap(long)]
-    pub use_indexer_experimental_methods: bool,
-
-    /// If we should use the new version of the indexer
-    #[clap(long)]
-    pub use_indexer_v2: bool,
 }
 
 #[tokio::main]
@@ -114,8 +106,6 @@ async fn main() -> Result<()> {
         epoch_duration_ms,
         faucet_port,
         with_indexer,
-        use_indexer_experimental_methods,
-        use_indexer_v2,
     } = args;
 
     // We don't pass epoch duration if we have a genesis config.
@@ -130,23 +120,20 @@ async fn main() -> Result<()> {
     }
     if !with_indexer {
         println!("`with_indexer` flag unset. Indexer service will not run.")
-    } else if !use_indexer_v2 {
-        println!("`with_indexer` flag unset. Indexer service will run unmaintained indexer.")
     }
 
     let cluster_config = ClusterTestOpt {
         env: Env::NewLocal,
-        fullnode_address: Some(format!("127.0.0.1:{}", fullnode_rpc_port)),
-        indexer_address: with_indexer.then_some(format!("127.0.0.1:{}", indexer_rpc_port)),
+
+        fullnode_address: Some(format!("0.0.0.0:{}", fullnode_rpc_port)),
+        indexer_address: with_indexer.then_some(format!("0.0.0.0:{}", indexer_rpc_port)),
         pg_address: Some(format!(
             "postgres://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_db_name}"
         )),
         faucet_address: Some(format!("127.0.0.1:{}", faucet_port)),
         epoch_duration_ms,
-        use_indexer_experimental_methods,
         config_dir,
         graphql_address: graphql_port.map(|p| format!("{}:{}", graphql_host, p)),
-        use_indexer_v2,
     };
 
     println!("Starting Sui validator with config: {:#?}", cluster_config);
@@ -192,7 +179,7 @@ async fn start_faucet(cluster: &LocalNewCluster, port: u16) -> Result<()> {
                 .into_inner(),
         );
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
     println!("Faucet URL: http://{}", addr);
 

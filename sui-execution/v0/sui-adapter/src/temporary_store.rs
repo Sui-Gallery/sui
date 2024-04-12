@@ -11,6 +11,7 @@ use sui_protocol_config::ProtocolConfig;
 use sui_types::committee::EpochId;
 use sui_types::effects::{TransactionEffects, TransactionEvents};
 use sui_types::execution::{DynamicallyLoadedObjectMetadata, ExecutionResults, SharedInput};
+use sui_types::execution_config_utils::to_binary_config;
 use sui_types::execution_status::ExecutionStatus;
 use sui_types::inner_temporary_store::InnerTemporaryStore;
 use sui_types::storage::{BackingStore, DeleteKindWithOldVersion, PackageObject};
@@ -151,11 +152,10 @@ impl<'backing> TemporaryStore<'backing> {
                 .map(|(id, (obj, _))| (id, obj))
                 .collect(),
             events: TransactionEvents { data: self.events },
-            max_binary_format_version: self.protocol_config.move_binary_format_version(),
             loaded_runtime_objects: self.loaded_child_objects,
-            no_extraneous_module_bytes: self.protocol_config.no_extraneous_module_bytes(),
             runtime_packages_loaded_from_db: self.runtime_packages_loaded_from_db.into_inner(),
             lamport_version: self.lamport_timestamp,
+            binary_config: to_binary_config(&self.protocol_config),
         }
     }
 
@@ -705,7 +705,7 @@ impl<'backing> TemporaryStore<'backing> {
             let new_object_size = object.object_size_for_gas_metering();
             // track changes and compute the new object `storage_rebate`
             let new_storage_rebate =
-                gas_charger.track_storage_mutation(new_object_size, old_storage_rebate);
+                gas_charger.track_storage_mutation(*object_id, new_object_size, old_storage_rebate);
             object.storage_rebate = new_storage_rebate;
             if !object.is_immutable() {
                 objects_to_update.push((object.clone(), *write_kind));
@@ -728,7 +728,7 @@ impl<'backing> TemporaryStore<'backing> {
                 | DeleteKindWithOldVersion::Normal(version) => {
                     // get and track the deleted object `storage_rebate`
                     let storage_rebate = self.get_input_storage_rebate(object_id, *version);
-                    gas_charger.track_storage_mutation(0, storage_rebate);
+                    gas_charger.track_storage_mutation(*object_id, 0, storage_rebate);
                 }
                 DeleteKindWithOldVersion::UnwrapThenDelete
                 | DeleteKindWithOldVersion::UnwrapThenDeleteDEPRECATED(_) => {
@@ -990,6 +990,13 @@ impl<'backing> Storage for TemporaryStore<'backing> {
         loaded_runtime_objects: BTreeMap<ObjectID, DynamicallyLoadedObjectMetadata>,
     ) {
         TemporaryStore::save_loaded_runtime_objects(self, loaded_runtime_objects)
+    }
+
+    fn save_wrapped_object_containers(
+        &mut self,
+        _wrapped_object_containers: BTreeMap<ObjectID, ObjectID>,
+    ) {
+        unreachable!("Unused in v0")
     }
 }
 

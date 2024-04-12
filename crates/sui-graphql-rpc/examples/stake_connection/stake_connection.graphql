@@ -10,24 +10,26 @@
       }
       totalBalance
     }
-    stakedSuiConnection {
+    stakedSuis {
       nodes {
         status
         principal
         estimatedReward
-        activeEpoch {
+        activatedEpoch {
           epochId
           referenceGasPrice
           validatorSet {
             activeValidators {
-              name
-              description
-              exchangeRatesSize
+              nodes {
+                name
+                description
+                exchangeRatesSize
+              }
             }
             totalStake
           }
         }
-        requestEpoch {
+        requestedEpoch {
           epochId
         }
       }

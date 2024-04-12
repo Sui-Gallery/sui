@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//# init --addresses P0=0x0 --simulator
+//# init --protocol-version 39 --addresses P0=0x0 --simulator
 
 //# publish
 
@@ -19,7 +19,7 @@ module P0::m {
 
 # The last transaction should have failed, what's its error message?
 {
-    transactionBlockConnection(last: 1) {
+    transactionBlocks(last: 1) {
         nodes {
             effects {
                 status
@@ -41,7 +41,7 @@ module P0::m {
 # Check the transaction command ordinal is correct if the abort
 # happens at a later command.
 {
-    transactionBlockConnection(last: 1) {
+    transactionBlocks(last: 1) {
         nodes {
             effects {
                 status

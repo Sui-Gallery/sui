@@ -15,6 +15,7 @@ use sui_types::effects::{TransactionEffects, TransactionEvents};
 use sui_types::execution::{
     DynamicallyLoadedObjectMetadata, ExecutionResults, ExecutionResultsV2, SharedInput,
 };
+use sui_types::execution_config_utils::to_binary_config;
 use sui_types::execution_status::ExecutionStatus;
 use sui_types::inner_temporary_store::InnerTemporaryStore;
 use sui_types::storage::{BackingStore, PackageObject};
@@ -111,11 +112,10 @@ impl<'backing> TemporaryStore<'backing> {
             events: TransactionEvents {
                 data: results.user_events,
             },
-            max_binary_format_version: self.protocol_config.move_binary_format_version(),
             loaded_runtime_objects: self.loaded_runtime_objects,
-            no_extraneous_module_bytes: self.protocol_config.no_extraneous_module_bytes(),
             runtime_packages_loaded_from_db: self.runtime_packages_loaded_from_db.into_inner(),
             lamport_version: self.lamport_timestamp,
+            binary_config: to_binary_config(&self.protocol_config),
         }
     }
 
@@ -747,8 +747,11 @@ impl<'backing> TemporaryStore<'backing> {
             // new object size
             let new_object_size = object.object_size_for_gas_metering();
             // track changes and compute the new object `storage_rebate`
-            let new_storage_rebate =
-                gas_charger.track_storage_mutation(new_object_size, old_storage_rebate);
+            let new_storage_rebate = gas_charger.track_storage_mutation(
+                object.id(),
+                new_object_size,
+                old_storage_rebate,
+            );
             object.storage_rebate = new_storage_rebate;
         }
 
@@ -770,7 +773,7 @@ impl<'backing> TemporaryStore<'backing> {
                 // Unwrap is safe because this loop iterates through all modified objects.
                 .unwrap()
                 .storage_rebate;
-            gas_charger.track_storage_mutation(0, storage_rebate);
+            gas_charger.track_storage_mutation(*object_id, 0, storage_rebate);
         }
     }
 
@@ -1094,6 +1097,13 @@ impl<'backing> Storage for TemporaryStore<'backing> {
         loaded_runtime_objects: BTreeMap<ObjectID, DynamicallyLoadedObjectMetadata>,
     ) {
         TemporaryStore::save_loaded_runtime_objects(self, loaded_runtime_objects)
+    }
+
+    fn save_wrapped_object_containers(
+        &mut self,
+        _wrapped_object_containers: BTreeMap<ObjectID, ObjectID>,
+    ) {
+        unreachable!("Unused in v1")
     }
 }
 

@@ -19,12 +19,9 @@ use move_binary_format::{
 use move_bytecode_utils::{layout::SerdeLayoutBuilder, module_cache::GetModule};
 use move_compiler::{
     compiled_unit::AnnotatedCompiledModule,
-    diagnostics::{
-        report_diagnostics_to_color_buffer, report_warnings, Diagnostics, FilesSourceText,
-    },
-    expansion::ast::{AttributeName_, Attributes},
-    shared::known_attributes::KnownAttribute,
-    sui_mode::linters::LINT_WARNING_PREFIX,
+    diagnostics::{report_diagnostics_to_buffer, report_warnings, Diagnostics, FilesSourceText},
+    editions::Edition,
+    linters::LINT_WARNING_PREFIX,
 };
 use move_core_types::{
     account_address::AccountAddress,
@@ -34,15 +31,17 @@ use move_package::{
     compilation::{
         build_plan::BuildPlan, compiled_package::CompiledPackage as MoveCompiledPackage,
     },
-    package_hooks::PackageHooks,
+    package_hooks::{PackageHooks, PackageIdentifier},
     resolution::resolution_graph::ResolvedGraph,
     BuildConfig as MoveBuildConfig,
 };
 use move_package::{
     resolution::resolution_graph::Package, source_package::parsed_manifest::CustomDepInfo,
+    source_package::parsed_manifest::SourceManifest,
 };
 use move_symbol_pool::Symbol;
 use serde_reflection::Registry;
+use sui_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
 use sui_types::{
     base_types::ObjectID,
     error::{SuiError, SuiResult},
@@ -57,7 +56,7 @@ use sui_verifier::verifier as sui_bytecode_verifier;
 mod build_tests;
 
 /// Wrapper around the core Move `CompiledPackage` with some Sui-specific traits and info
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CompiledPackage {
     pub package: MoveCompiledPackage,
     /// Address the package is recorded as being published at.
@@ -86,23 +85,36 @@ impl BuildConfig {
         let lock_file = install_dir.join("Move.lock");
         build_config.config.install_dir = Some(install_dir);
         build_config.config.lock_file = Some(lock_file);
-        build_config.config.no_lint = true;
+        build_config
+            .config
+            .lint_flag
+            .set(move_compiler::linters::LintLevel::None);
         build_config
     }
 
-    fn is_test(attributes: &Attributes) -> bool {
-        attributes
-            .iter()
-            .any(|(_, name, _)| matches!(name, AttributeName_::Known(KnownAttribute::Testing(_))))
+    pub fn new_for_testing_replace_addresses<I, S>(dep_original_addresses: I) -> Self
+    where
+        I: IntoIterator<Item = (S, ObjectID)>,
+        S: Into<String>,
+    {
+        let mut build_config = Self::new_for_testing();
+        for (addr_name, obj_id) in dep_original_addresses {
+            build_config
+                .config
+                .additional_named_addresses
+                .insert(addr_name.into(), AccountAddress::from(obj_id));
+        }
+        build_config
     }
 
     fn fn_info(units: &[AnnotatedCompiledModule]) -> FnInfoMap {
         let mut fn_info_map = BTreeMap::new();
         for u in units {
             let mod_addr = u.named_module.address.into_inner();
+            let mod_is_test = u.attributes.is_test_or_test_only();
             for (_, s, info) in &u.function_infos {
                 let fn_name = s.as_str().to_string();
-                let is_test = Self::is_test(&info.attributes);
+                let is_test = mod_is_test || info.attributes.is_test_or_test_only();
                 fn_info_map.insert(FnInfoKey { fn_name, mod_addr }, FnInfo { is_test });
             }
         }
@@ -128,7 +140,8 @@ impl BuildConfig {
                     // with errors present don't even try decorating warnings output to avoid
                     // clutter
                     assert!(!error_diags.is_empty());
-                    let diags_buf = report_diagnostics_to_color_buffer(&files, error_diags);
+                    let diags_buf =
+                        report_diagnostics_to_buffer(&files, error_diags, /* color */ true);
                     if let Err(err) = std::io::stderr().write_all(&diags_buf) {
                         anyhow::bail!("Cannot output compiler diagnostics: {}", err);
                     }
@@ -146,7 +159,7 @@ impl BuildConfig {
         let run_bytecode_verifier = self.run_bytecode_verifier;
         let resolution_graph = self.resolution_graph(&path)?;
         build_from_resolution_graph(
-            path,
+            path.clone(),
             resolution_graph,
             run_bytecode_verifier,
             print_diags_to_stderr,
@@ -229,13 +242,16 @@ pub fn build_from_resolution_graph(
     };
     let compiled_modules = package.root_modules_map();
     if run_bytecode_verifier {
+        let verifier_config = ProtocolConfig::get_for_version(ProtocolVersion::MAX, Chain::Unknown)
+            .verifier_config(/* for_signing */ false);
+
         for m in compiled_modules.iter_modules() {
             move_bytecode_verifier::verify_module_unmetered(m).map_err(|err| {
                 SuiError::ModuleVerificationFailure {
                     error: err.to_string(),
                 }
             })?;
-            sui_bytecode_verifier::sui_verify_module_unmetered(m, &fn_info)?;
+            sui_bytecode_verifier::sui_verify_module_unmetered(m, &fn_info, &verifier_config)?;
         }
         // TODO(https://github.com/MystenLabs/sui/issues/69): Run Move linker
     }
@@ -570,7 +586,11 @@ pub struct SuiPackageHooks;
 
 impl PackageHooks for SuiPackageHooks {
     fn custom_package_info_fields(&self) -> Vec<String> {
-        vec![PUBLISHED_AT_MANIFEST_FIELD.to_string()]
+        vec![
+            PUBLISHED_AT_MANIFEST_FIELD.to_string(),
+            // TODO: remove this once version fields are removed from all manifests
+            "version".to_string(),
+        ]
     }
 
     fn custom_dependency_key(&self) -> Option<String> {
@@ -584,9 +604,23 @@ impl PackageHooks for SuiPackageHooks {
     ) -> anyhow::Result<()> {
         Ok(())
     }
+
+    fn custom_resolve_pkg_id(
+        &self,
+        manifest: &SourceManifest,
+    ) -> anyhow::Result<PackageIdentifier> {
+        if manifest.package.edition == Some(Edition::DEVELOPMENT) {
+            return Err(Edition::DEVELOPMENT.unknown_edition_error());
+        }
+        Ok(manifest.package.name)
+    }
+
+    fn resolve_version(&self, _: &SourceManifest) -> anyhow::Result<Option<Symbol>> {
+        Ok(None)
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PackageDependencies {
     /// Set of published dependencies (name and address).
     pub published: BTreeMap<Symbol, ObjectID>,
@@ -596,7 +630,7 @@ pub struct PackageDependencies {
     pub invalid: BTreeMap<Symbol, String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PublishedAtError {
     Invalid(String),
     NotPresent,

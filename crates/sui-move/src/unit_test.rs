@@ -31,30 +31,28 @@ const MAX_UNIT_TEST_INSTRUCTIONS: u64 = 1_000_000;
 pub struct Test {
     #[clap(flatten)]
     pub test: test::Test,
-    /// If `true`, disable linters
-    #[clap(long, global = true)]
-    pub no_lint: bool,
 }
 
 impl Test {
     pub fn execute(
-        &self,
+        self,
         path: Option<PathBuf>,
         build_config: BuildConfig,
-        unit_test_config: UnitTestingConfig,
     ) -> anyhow::Result<UnitTestResult> {
-        if !cfg!(debug_assertions) && self.test.compute_coverage {
+        let compute_coverage = self.test.compute_coverage;
+        if !cfg!(debug_assertions) && compute_coverage {
             return Err(anyhow::anyhow!(
                 "The --coverage flag is currently supported only in debug builds. Please build the Sui CLI from source in debug mode."
             ));
         }
         // find manifest file directory from a given path or (if missing) from current dir
         let rerooted_path = base::reroot_path(path)?;
+        let unit_test_config = self.test.unit_test_config();
         run_move_unit_tests(
             rerooted_path,
             build_config,
             Some(unit_test_config),
-            self.test.compute_coverage,
+            compute_coverage,
         )
     }
 }
@@ -132,7 +130,7 @@ fn new_testing_object_and_natives_cost_runtime(ext: &mut NativeContextExtensions
         store,
         BTreeMap::new(),
         false,
-        &ProtocolConfig::get_for_max_version_UNSAFE(),
+        Box::leak(Box::new(ProtocolConfig::get_for_max_version_UNSAFE())), // leak for testing
         metrics,
         0, // epoch id
     ));

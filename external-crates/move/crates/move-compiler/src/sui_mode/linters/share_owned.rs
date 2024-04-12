@@ -82,10 +82,20 @@ impl SimpleAbsIntConstructor for ShareOwnedVerifier {
 
     fn new<'a>(
         _env: &CompilationEnv,
-        _program: &'a Program,
-        _context: &'a CFGContext<'a>,
+        program: &'a Program,
+        context: &'a CFGContext<'a>,
         _init_state: &mut <Self::AI<'a> as SimpleAbsInt>::State,
     ) -> Option<Self::AI<'a>> {
+        if context.attributes.is_test_or_test_only()
+            || program
+                .modules
+                .get(&context.module)
+                .unwrap()
+                .attributes
+                .is_test_or_test_only()
+        {
+            return None;
+        }
         Some(ShareOwnedVerifierAI)
     }
 }
@@ -202,7 +212,7 @@ impl SimpleAbsInt for ShareOwnedVerifierAI {
 }
 
 fn is_obj(sp!(_, l_): &LValue) -> bool {
-    if let LValue_::Var(_, st) = l_ {
+    if let LValue_::Var { ty: st, .. } = l_ {
         return is_obj_type(st);
     }
     false
@@ -219,7 +229,7 @@ impl SimpleDomain for State {
     type Value = Value;
 
     fn new(context: &CFGContext, mut locals: BTreeMap<Var, LocalState<Value>>) -> Self {
-        for (v, st) in &context.signature.parameters {
+        for (_mut, v, st) in &context.signature.parameters {
             if is_obj_type(st) {
                 let local_state = locals.get_mut(v).unwrap();
                 if let LocalState::Available(loc, _) = local_state {

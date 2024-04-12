@@ -1,7 +1,14 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
+use crate::base_types::{AuthorityName, ConciseableName, SuiAddress};
+use crate::committee::CommitteeTrait;
+use crate::committee::{Committee, EpochId, StakeUnit};
+use crate::error::{SuiError, SuiResult};
+use crate::signature::GenericSignature;
+use crate::sui_serde::{Readable, SuiBitmap};
 use anyhow::{anyhow, Error};
 use derive_more::{AsMut, AsRef, From};
+pub use enum_dispatch::enum_dispatch;
 use eyre::eyre;
 use fastcrypto::bls12381::min_sig::{
     BLS12381AggregateSignature, BLS12381AggregateSignatureAsBytes, BLS12381KeyPair,
@@ -11,6 +18,9 @@ use fastcrypto::ed25519::{
     Ed25519KeyPair, Ed25519PrivateKey, Ed25519PublicKey, Ed25519PublicKeyAsBytes, Ed25519Signature,
     Ed25519SignatureAsBytes,
 };
+use fastcrypto::encoding::{Base64, Bech32, Encoding, Hex};
+use fastcrypto::error::FastCryptoError;
+use fastcrypto::hash::{Blake2b256, HashFunction};
 use fastcrypto::secp256k1::{
     Secp256k1KeyPair, Secp256k1PublicKey, Secp256k1PublicKeyAsBytes, Secp256k1Signature,
     Secp256k1SignatureAsBytes,
@@ -20,11 +30,13 @@ use fastcrypto::secp256r1::{
     Secp256r1SignatureAsBytes,
 };
 pub use fastcrypto::traits::KeyPair as KeypairTraits;
+pub use fastcrypto::traits::Signer;
 pub use fastcrypto::traits::{
     AggregateAuthenticator, Authenticator, EncodeDecodeBase64, SigningKey, ToFromBytes,
     VerifyingKey,
 };
-use fastcrypto_zkp::bn254::utils::big_int_str_to_bytes;
+use fastcrypto_zkp::bn254::zk_login::ZkLoginInputs;
+use fastcrypto_zkp::zk_login_utils::Bn254FrElement;
 use rand::rngs::{OsRng, StdRng};
 use rand::SeedableRng;
 use roaring::RoaringBitmap;
@@ -34,22 +46,11 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_with::{serde_as, Bytes};
 use shared_crypto::intent::{Intent, IntentMessage, IntentScope};
 use std::collections::BTreeMap;
-use std::fmt::{Display, Formatter};
+use std::fmt::Debug;
+use std::fmt::{self, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 use strum::EnumString;
-
-use crate::base_types::{AuthorityName, SuiAddress};
-use crate::committee::{Committee, EpochId, StakeUnit};
-use crate::error::{SuiError, SuiResult};
-use crate::signature::GenericSignature;
-use crate::sui_serde::{Readable, SuiBitmap};
-pub use enum_dispatch::enum_dispatch;
-use fastcrypto::encoding::{Base64, Encoding, Hex};
-use fastcrypto::error::FastCryptoError;
-use fastcrypto::hash::{Blake2b256, HashFunction};
-pub use fastcrypto::traits::Signer;
-use std::fmt::Debug;
 use tracing::{instrument, warn};
 
 #[cfg(test)]
@@ -73,7 +74,6 @@ pub type AggregateAuthoritySignatureAsBytes = BLS12381AggregateSignatureAsBytes;
 pub type AccountKeyPair = Ed25519KeyPair;
 pub type AccountPublicKey = Ed25519PublicKey;
 pub type AccountPrivateKey = Ed25519PrivateKey;
-pub type AccountSignature = Ed25519Signature;
 
 pub type NetworkKeyPair = Ed25519KeyPair;
 pub type NetworkPublicKey = Ed25519PublicKey;
@@ -82,6 +82,7 @@ pub type NetworkPrivateKey = Ed25519PrivateKey;
 pub type DefaultHash = Blake2b256;
 
 pub const DEFAULT_EPOCH_ID: EpochId = 0;
+pub const SUI_PRIV_KEY_PREFIX: &str = "suiprivkey";
 
 /// Creates a proof of that the authority account address is owned by the
 /// holder of authority protocol key, and also ensures that the authority
@@ -159,18 +160,18 @@ impl Signer<Signature> for SuiKeyPair {
     }
 }
 
-impl FromStr for SuiKeyPair {
-    type Err = eyre::Report;
+impl EncodeDecodeBase64 for SuiKeyPair {
+    fn encode_base64(&self) -> String {
+        Base64::encode(self.to_bytes())
+    }
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let kp = Self::decode_base64(s).map_err(|e| eyre!("{}", e.to_string()))?;
-        Ok(kp)
+    fn decode_base64(value: &str) -> Result<Self, eyre::Report> {
+        let bytes = Base64::decode(value).map_err(|e| eyre!("{}", e.to_string()))?;
+        Self::from_bytes(&bytes)
     }
 }
-
-impl EncodeDecodeBase64 for SuiKeyPair {
-    /// Encode a SuiKeyPair as `flag || privkey` in Base64. Note that the pubkey is not encoded.
-    fn encode_base64(&self) -> String {
+impl SuiKeyPair {
+    pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes: Vec<u8> = Vec::new();
         bytes.push(self.public().flag());
 
@@ -185,12 +186,10 @@ impl EncodeDecodeBase64 for SuiKeyPair {
                 bytes.extend_from_slice(kp.as_bytes());
             }
         }
-        Base64::encode(&bytes[..])
+        bytes
     }
 
-    /// Decode a SuiKeyPair from `flag || privkey` in Base64. The public key is computed directly from the private key bytes.
-    fn decode_base64(value: &str) -> Result<Self, eyre::Report> {
-        let bytes = Base64::decode(value).map_err(|e| eyre!("{}", e.to_string()))?;
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, eyre::Report> {
         match SignatureScheme::from_flag_byte(bytes.first().ok_or_else(|| eyre!("Invalid length"))?)
         {
             Ok(x) => match x {
@@ -212,6 +211,16 @@ impl EncodeDecodeBase64 for SuiKeyPair {
             _ => Err(eyre!("Invalid bytes")),
         }
     }
+    /// Encode a SuiKeyPair as `flag || privkey` in Bech32 starting with "suiprivkey" to a string. Note that the pubkey is not encoded.
+    pub fn encode(&self) -> Result<String, eyre::Report> {
+        Bech32::encode(self.to_bytes(), SUI_PRIV_KEY_PREFIX)
+    }
+
+    /// Decode a SuiKeyPair from `flag || privkey` in Bech32 starting with "suiprivkey" to SuiKeyPair. The public key is computed directly from the private key bytes.
+    pub fn decode(value: &str) -> Result<Self, eyre::Report> {
+        let bytes = Bech32::decode(value, SUI_PRIV_KEY_PREFIX)?;
+        Self::from_bytes(&bytes)
+    }
 }
 
 impl Serialize for SuiKeyPair {
@@ -231,8 +240,7 @@ impl<'de> Deserialize<'de> for SuiKeyPair {
     {
         use serde::de::Error;
         let s = String::deserialize(deserializer)?;
-        <SuiKeyPair as EncodeDecodeBase64>::decode_base64(&s)
-            .map_err(|e| Error::custom(e.to_string()))
+        SuiKeyPair::decode_base64(&s).map_err(|e| Error::custom(e.to_string()))
     }
 }
 
@@ -251,19 +259,12 @@ pub struct ZkLoginPublicIdentifier(#[schemars(with = "Base64")] pub Vec<u8>);
 
 impl ZkLoginPublicIdentifier {
     /// Consists of iss_bytes_len || iss_bytes || padded_32_byte_address_seed.
-    pub fn new(iss: &str, address_seed: &str) -> SuiResult<Self> {
+    pub fn new(iss: &str, address_seed: &Bn254FrElement) -> SuiResult<Self> {
         let mut bytes = Vec::new();
         let iss_bytes = iss.as_bytes();
         bytes.extend([iss_bytes.len() as u8]);
         bytes.extend(iss_bytes);
-
-        // pad 0 to make it 32 bytes.
-        let address_seed_bytes =
-            big_int_str_to_bytes(address_seed).map_err(|_| SuiError::InvalidAddress)?;
-        let mut padded = Vec::new();
-        padded.extend(vec![0; 32 - address_seed_bytes.len()]);
-        padded.extend(address_seed_bytes);
-        bytes.extend(padded.clone());
+        bytes.extend(address_seed.padded());
 
         Ok(Self(bytes))
     }
@@ -346,6 +347,13 @@ impl PublicKey {
             PublicKey::ZkLogin(_) => SignatureScheme::ZkLoginAuthenticator,
         }
     }
+
+    pub fn from_zklogin_inputs(inputs: &ZkLoginInputs) -> SuiResult<Self> {
+        Ok(PublicKey::ZkLogin(ZkLoginPublicIdentifier::new(
+            inputs.get_iss(),
+            inputs.get_address_seed(),
+        )?))
+    }
 }
 
 /// Defines the compressed version of the public key that we pass around
@@ -377,17 +385,22 @@ impl AuthorityPublicKeyBytes {
         write!(f, "k#{}", s)?;
         Ok(())
     }
+}
+
+impl<'a> ConciseableName<'a> for AuthorityPublicKeyBytes {
+    type ConciseTypeRef = ConciseAuthorityPublicKeyBytesRef<'a>;
+    type ConciseType = ConciseAuthorityPublicKeyBytes;
 
     /// Get a ConciseAuthorityPublicKeyBytesRef. Usage:
     ///
     ///   debug!(name = ?authority.concise());
     ///   format!("{:?}", authority.concise());
-    pub fn concise(&self) -> ConciseAuthorityPublicKeyBytesRef<'_> {
+    fn concise(&'a self) -> ConciseAuthorityPublicKeyBytesRef<'a> {
         ConciseAuthorityPublicKeyBytesRef(self)
     }
 
-    pub fn into_concise(self) -> ConciseAuthorityPublicKeyBytes {
-        ConciseAuthorityPublicKeyBytes(self)
+    fn concise_owned(&self) -> ConciseAuthorityPublicKeyBytes {
+        ConciseAuthorityPublicKeyBytes(*self)
     }
 }
 
@@ -1683,5 +1696,56 @@ impl FromStr for GenericSignature {
     type Err = eyre::Report;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::decode_base64(s).map_err(|e| eyre!("Fail to decode base64 {}", e.to_string()))
+    }
+}
+
+//
+// Types for randomness generation
+//
+pub type RandomnessSignature = fastcrypto_tbls::types::Signature;
+pub type RandomnessPartialSignature = fastcrypto_tbls::tbls::PartialSignature<RandomnessSignature>;
+pub type RandomnessPrivateKey =
+    fastcrypto_tbls::ecies::PrivateKey<fastcrypto::groups::bls12381::G2Element>;
+
+/// Round number of generated randomness.
+#[derive(Clone, Copy, Hash, Serialize, Deserialize, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RandomnessRound(pub u64);
+
+impl Display for RandomnessRound {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::ops::Add for RandomnessRound {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        Self(self.0 + other.0)
+    }
+}
+
+impl std::ops::Add<u64> for RandomnessRound {
+    type Output = Self;
+    fn add(self, other: u64) -> Self {
+        Self(self.0 + other)
+    }
+}
+
+impl RandomnessRound {
+    pub fn new(round: u64) -> Self {
+        Self(round)
+    }
+
+    pub fn checked_add(self, rhs: u64) -> Option<Self> {
+        self.0.checked_add(rhs).map(Self)
+    }
+
+    pub fn signature_message(&self) -> Vec<u8> {
+        "random_beacon round "
+            .as_bytes()
+            .iter()
+            .cloned()
+            .chain(bcs::to_bytes(&self.0).expect("serialization should not fail"))
+            .collect()
     }
 }

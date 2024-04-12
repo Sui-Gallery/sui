@@ -15,17 +15,29 @@ import {
 	useCoinsReFetchingConfig,
 	useSortedCoinsByCategories,
 } from '_hooks';
+import {
+	DELEGATED_STAKES_QUERY_REFETCH_INTERVAL,
+	DELEGATED_STAKES_QUERY_STALE_TIME,
+} from '_shared/constants';
 import { ampli } from '_src/shared/analytics/ampli';
 import { API_ENV } from '_src/shared/api-env';
 import { FEATURES } from '_src/shared/experimentation/features';
 import { AccountsList } from '_src/ui/app/components/accounts/AccountsList';
 import { UnlockAccountButton } from '_src/ui/app/components/accounts/UnlockAccountButton';
+import { BuyNLargeHomePanel } from '_src/ui/app/components/buynlarge/HomePanel';
 import { useActiveAccount } from '_src/ui/app/hooks/useActiveAccount';
 import { usePinnedCoinTypes } from '_src/ui/app/hooks/usePinnedCoinTypes';
 import FaucetRequestButton from '_src/ui/app/shared/faucet/FaucetRequestButton';
 import PageTitle from '_src/ui/app/shared/PageTitle';
 import { useFeature } from '@growthbook/growthbook-react';
-import { useAppsBackend, useCoinMetadata, useFormatCoin, useResolveSuiNSName } from '@mysten/core';
+import {
+	useAppsBackend,
+	useBalanceInUSD,
+	useCoinMetadata,
+	useFormatCoin,
+	useGetDelegatedStake,
+	useResolveSuiNSName,
+} from '@mysten/core';
 import { useSuiClientQuery } from '@mysten/dapp-kit';
 import { Info12, Pin16, Unpin16 } from '@mysten/icons';
 import { type CoinBalance as CoinBalanceType } from '@mysten/sui.js/client';
@@ -104,6 +116,8 @@ export function TokenRow({
 	});
 	const allowedSwapCoinsList = useAllowedSwapCoinsList();
 
+	const balanceInUsd = useBalanceInUSD(coinBalance.coinType, coinBalance.totalBalance);
+
 	const isRenderSwapButton = allowedSwapCoinsList.includes(coinType);
 
 	return (
@@ -172,10 +186,19 @@ export function TokenRow({
 				</div>
 			</div>
 
-			<div className="ml-auto flex flex-col items-end gap-1.5">
+			<div className="ml-auto flex flex-col items-end gap-1">
 				{balance > 0n && (
 					<Text variant="body" color="gray-90" weight="medium">
 						{formatted} {symbol}
+					</Text>
+				)}
+
+				{balanceInUsd && balanceInUsd > 0 && (
+					<Text variant="subtitle" color="steel-dark" weight="medium">
+						{Number(balanceInUsd).toLocaleString('en', {
+							style: 'currency',
+							currency: 'USD',
+						})}
 					</Text>
 				)}
 			</div>
@@ -332,6 +355,12 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 		},
 	);
 
+	const { data: delegatedStake } = useGetDelegatedStake({
+		address: activeAccountAddress || '',
+		staleTime: DELEGATED_STAKES_QUERY_STALE_TIME,
+		refetchInterval: DELEGATED_STAKES_QUERY_REFETCH_INTERVAL,
+	});
+
 	const walletInterstitialConfig = useFeature<InterstitialConfig>(
 		FEATURES.WALLET_INTERSTITIAL_CONFIG,
 	).value;
@@ -395,6 +424,7 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 					data-testid="coin-page"
 				>
 					<AccountsList />
+					<BuyNLargeHomePanel />
 					<div className="flex flex-col w-full">
 						<PortfolioName
 							name={activeAccount.nickname ?? domainName ?? formatAddress(activeAccountAddress)}
@@ -496,7 +526,7 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 									</div>
 
 									<div className="w-full">
-										{activeCoinType === SUI_TYPE_ARG && accountHasSui ? (
+										{accountHasSui || delegatedStake?.length ? (
 											<TokenIconLink
 												disabled={!tokenBalance}
 												accountAddress={activeAccountAddress}

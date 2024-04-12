@@ -65,12 +65,12 @@
 #### &emsp;&emsp;[Before After Checkpoint](#1179630)
 #### &emsp;&emsp;[Changed Object Filter](#1179631)
 #### &emsp;&emsp;[Input Object Filter](#1179632)
-#### &emsp;&emsp;[Input Object Sent Addr Filter](#1179633)
+#### &emsp;&emsp;[Input Object Sign Addr Filter](#1179633)
 #### &emsp;&emsp;[Package Filter](#1179634)
 #### &emsp;&emsp;[Package Module Filter](#1179635)
 #### &emsp;&emsp;[Package Module Func Filter](#1179636)
 #### &emsp;&emsp;[Recv Addr Filter](#1179637)
-#### &emsp;&emsp;[Sent Addr Filter](#1179638)
+#### &emsp;&emsp;[Sign Addr Filter](#1179638)
 #### &emsp;&emsp;[Tx Ids Filter](#1179639)
 #### &emsp;&emsp;[Tx Kind Filter](#1179640)
 #### &emsp;&emsp;[With Defaults Ascending](#1179641)
@@ -94,16 +94,13 @@
 >      coinObjectCount
 >      totalBalance
 >    }
->    coinConnection {
+>    coins {
 >      nodes {
->        asMoveObject {
->          contents {
->            type {
->              repr
->            }
+>        contents {
+>          type {
+>            repr
 >          }
 >        }
->
 >      }
 >    }
 >  }
@@ -111,21 +108,23 @@
 
 ### <a id=1></a>
 ### Transaction Block Connection
-####  See examples in Query::transactionBlockConnection as this is
-####  similar behavior to the `transactionBlockConnection` in Query but
-####  supports additional `AddressTransactionBlockRelationship` filter
-####  Filtering on package where the sender of the TX is the current address
-####  and displaying the transaction's sender and the gas price and budget
+####  See examples in Query::transactionBlocks as this is similar behavior
+####  to the `transactionBlocks` in Query but supports additional
+####  `AddressTransactionBlockRelationship` filter
+####  Filtering on package where the signer of the TX is the current
+####  address and displaying the transaction's sender and the gas price
+####  and budget.
 
-><pre># See examples in Query::transactionBlockConnection as this is
-># similar behavior to the `transactionBlockConnection` in Query but
-># supports additional `AddressTransactionBlockRelationship` filter
+><pre># See examples in Query::transactionBlocks as this is similar behavior
+># to the `transactionBlocks` in Query but supports additional
+># `AddressTransactionBlockRelationship` filter
 >
-># Filtering on package where the sender of the TX is the current address
-># and displaying the transaction's sender and the gas price and budget
+># Filtering on package where the signer of the TX is the current
+># address and displaying the transaction's sender and the gas price
+># and budget.
 >query transaction_block_with_relation_filter {
 >  address(address: "0x2") {
->    transactionBlockConnection(relation: SENT, filter: { package: "0x2" }) {
+>    transactionBlocks(relation: SIGN, filter: { function: "0x2" }) {
 >      nodes {
 >        sender {
 >          address
@@ -156,7 +155,7 @@
 >      coinObjectCount
 >      totalBalance
 >    }
->    balanceConnection {
+>    balances {
 >      nodes {
 >        coinType {
 >          repr
@@ -191,7 +190,7 @@
 >  checkpoint(id: { digest: "GaDeWEfbSQCQ8FBQHUHVdm4KjrnbgMqEZPuhStoq5njU" }) {
 >    digest
 >    sequenceNumber
->    validatorSignature
+>    validatorSignatures
 >    previousCheckpointDigest
 >    networkTotalTransactions
 >    rollingGasSummary {
@@ -205,9 +204,6 @@
 >      referenceGasPrice
 >      startTimestamp
 >      endTimestamp
->    }
->    endOfEpoch {
->      nextProtocolVersion
 >    }
 >  }
 >}</pre>
@@ -220,7 +216,7 @@
 >  checkpoint(id: { sequenceNumber: 10 }) {
 >    digest
 >    sequenceNumber
->    validatorSignature
+>    validatorSignatures
 >    previousCheckpointDigest
 >    networkTotalTransactions
 >    rollingGasSummary {
@@ -235,9 +231,6 @@
 >      startTimestamp
 >      endTimestamp
 >    }
->    endOfEpoch {
->      nextProtocolVersion
->    }
 >  }
 >}</pre>
 
@@ -247,7 +240,7 @@
 
 ><pre>{
 >  checkpoint(id: { sequenceNumber: 10 }) {
->    transactionBlockConnection(first: 2) {
+>    transactionBlocks(first: 2) {
 >      edges {
 >        node {
 >          kind {
@@ -280,7 +273,7 @@
 >  checkpoint {
 >    digest
 >    sequenceNumber
->    validatorSignature
+>    validatorSignatures
 >    previousCheckpointDigest
 >    networkTotalTransactions
 >    rollingGasSummary {
@@ -295,25 +288,21 @@
 >      startTimestamp
 >      endTimestamp
 >    }
->    endOfEpoch {
->      nextProtocolVersion
->    }
 >  }
 >}</pre>
 
 ### <a id=196609></a>
 ### Multiple Selections
 ####  Get the checkpoint at sequence 9769 and show
-####  the new committe authority and stake units
+####  its transactions
 
 ><pre>{
 >  checkpoint(id: { sequenceNumber: 9769 }) {
 >    digest
 >    sequenceNumber
 >    timestamp
->    validatorSignature
+>    validatorSignatures
 >    previousCheckpointDigest
->    liveObjectSetDigest
 >    networkTotalTransactions
 >    rollingGasSummary {
 >      computationCost
@@ -323,15 +312,9 @@
 >    }
 >    epoch {
 >      epochId
+>      liveObjectSetDigest
 >    }
->    endOfEpoch {
->      newCommittee {
->        authorityName
->        stakeUnit
->      }
->      nextProtocolVersion
->    }
->    transactionBlockConnection {
+>    transactionBlocks {
 >      edges {
 >        node {
 >          digest
@@ -349,15 +332,14 @@
 
 ### <a id=196610></a>
 ### With Timestamp Tx Block Live Objects
-####  Latest checkpoint's timestamp, liveObjectSetDigest, and transaction block data
+####  Latest checkpoint's timestamp, and transaction block data
 
 ><pre>{
 >  checkpoint {
 >    digest
 >    sequenceNumber
 >    timestamp
->    liveObjectSetDigest
->    transactionBlockConnection {
+>    transactionBlocks {
 >      edges {
 >        node {
 >          digest
@@ -375,17 +357,16 @@
 
 ### <a id=196611></a>
 ### With Tx Sent Addr Filter
-####  Select checkpoint at sequence number 14830285 for transactions from sentAddress
+####  Select checkpoint at sequence number 14830285 for transactions from signAddress
 
 ><pre>{
 >  checkpoint(id: { sequenceNumber: 14830285 }) {
 >    digest
 >    sequenceNumber
 >    timestamp
->    liveObjectSetDigest
->    transactionBlockConnection(
+>    transactionBlocks(
 >      filter: {
->        sentAddress: "0x0000000000000000000000000000000000000000000000000000000000000000"
+>        signAddress: "0x0000000000000000000000000000000000000000000000000000000000000000"
 >      }
 >    ) {
 >      edges {
@@ -410,11 +391,11 @@
 ####  Use the checkpoint connection to fetch some default amount of checkpoints in an ascending order
 
 ><pre>{
->  checkpointConnection {
+>  checkpoints {
 >    nodes {
 >      digest
 >      sequenceNumber
->      validatorSignature
+>      validatorSignatures
 >      previousCheckpointDigest
 >      networkTotalTransactions
 >      rollingGasSummary {
@@ -429,19 +410,16 @@
 >        startTimestamp
 >        endTimestamp
 >      }
->      endOfEpoch {
->        nextProtocolVersion
->      }
 >    }
 >  }
 >}</pre>
 
 ### <a id=262141></a>
 ### First Ten After Checkpoint
-####  Fetch the digest and sequence number of the first 10 checkpoints after the cursor, which in this example is set to be checkpoint 11. Note that cursor will be opaque
+####  Fetch the digest and sequence number of the first 10 checkpoints after the cursor, which in this example is set to be checkpoint 0. Note that the cursor is opaque.
 
 ><pre>{
->  checkpointConnection(first: 10, after: "11") {
+>  checkpoints(first: 10, after: "eyJjIjoyMjgwMDU4MCwicyI6MH0") {
 >    nodes {
 >      sequenceNumber
 >      digest
@@ -454,7 +432,7 @@
 ####  Fetch the digest and the sequence number of the last 20 checkpoints before the cursor
 
 ><pre>{
->  checkpointConnection(last: 20, before: "100") {
+>  checkpoints(last: 20, before: "eyJjIjoyMjgwMDY1MSwicyI6MjI4MDA2MzJ9") {
 >    nodes {
 >      sequenceNumber
 >      digest
@@ -466,15 +444,15 @@
 ## Coin Connection
 ### <a id=327675></a>
 ### Coin Connection
-####  Get last 3 coins before coins at cursor 13034947
+####  Get last 3 coins owned by `0x0`.
 
 ><pre>{
 >  address(
 >    address: "0x0000000000000000000000000000000000000000000000000000000000000000"
 >  ) {
->    coinConnection(last: 3, before: "0x13034947") {
+>    coins(last: 3) {
 >      nodes {
->        balance
+>        coinBalance
 >      }
 >      pageInfo {
 >        endCursor
@@ -497,9 +475,7 @@
 >    description
 >    iconUrl
 >    supply
->    asMoveObject {
->      hasPublicTransfer
->    }
+>    hasPublicTransfer
 >  }
 >}</pre>
 
@@ -518,42 +494,6 @@
 >    referenceGasPrice
 >    startTimestamp
 >    endTimestamp
->    validatorSet {
->      totalStake
->      pendingActiveValidatorsSize
->      stakePoolMappingsSize
->      inactivePoolsSize
->      validatorCandidatesSize
->      activeValidators {
->        name
->        description
->        imageUrl
->        projectUrl
->        exchangeRates {
->          asObject {
->            storageRebate
->            bcs
->            kind
->          }
->          hasPublicTransfer
->        }
->        exchangeRatesSize
->        stakingPoolActivationEpoch
->        stakingPoolSuiBalance
->        rewardsPool
->        poolTokenBalance
->        pendingStake
->        pendingTotalSuiWithdraw
->        pendingPoolTokenWithdraw
->        votingPower
->        gasPrice
->        commissionRate
->        nextEpochStake
->        nextEpochGasPrice
->        nextEpochCommissionRate
->        atRisk
->      }
->    }
 >  }
 >}</pre>
 
@@ -573,37 +513,36 @@
 >    validatorSet {
 >      totalStake
 >      pendingActiveValidatorsSize
->      stakePoolMappingsSize
+>      stakingPoolMappingsSize
 >      inactivePoolsSize
 >      validatorCandidatesSize
 >      activeValidators {
->        name
->        description
->        imageUrl
->        projectUrl
->        exchangeRates {
->          asObject {
+>        nodes {
+>          name
+>          description
+>          imageUrl
+>          projectUrl
+>          exchangeRates {
 >            storageRebate
 >            bcs
->            kind
+>            hasPublicTransfer
 >          }
->          hasPublicTransfer
+>          exchangeRatesSize
+>          stakingPoolActivationEpoch
+>          stakingPoolSuiBalance
+>          rewardsPool
+>          poolTokenBalance
+>          pendingStake
+>          pendingTotalSuiWithdraw
+>          pendingPoolTokenWithdraw
+>          votingPower
+>          gasPrice
+>          commissionRate
+>          nextEpochStake
+>          nextEpochGasPrice
+>          nextEpochCommissionRate
+>          atRisk
 >        }
->        exchangeRatesSize
->        stakingPoolActivationEpoch
->        stakingPoolSuiBalance
->        rewardsPool
->        poolTokenBalance
->        pendingStake
->        pendingTotalSuiWithdraw
->        pendingPoolTokenWithdraw
->        votingPower
->        gasPrice
->        commissionRate
->        nextEpochStake
->        nextEpochGasPrice
->        nextEpochCommissionRate
->        atRisk
 >      }
 >    }
 >  }
@@ -614,9 +553,9 @@
 
 ><pre>{
 >  epoch {
->    checkpointConnection {
+>    checkpoints {
 >      nodes {
->        transactionBlockConnection(first: 10) {
+>        transactionBlocks(first: 10) {
 >          pageInfo {
 >            hasNextPage
 >            endCursor
@@ -648,11 +587,12 @@
 
 ### <a id=458748></a>
 ### With Tx Block Connection
-####  Fetch the first 20 transactions after 231220100 for epoch 97
+####  Fetch the first 20 transactions after tx 231220153 (encoded as a
+####  cursor) in epoch 97.
 
 ><pre>{
->  epoch(id:97) {
->    transactionBlockConnection(first: 20, after:"231220100") {
+>  epoch(id: 97) {
+>    transactionBlocks(first: 20, after:"eyJjIjoyNjkzMzc3OCwidCI6MjMxMjIwMTUzLCJ0YyI6ODAxMDg4NH0") {
 >      pageInfo {
 >        hasNextPage
 >        endCursor
@@ -683,12 +623,10 @@
 
 ### <a id=458749></a>
 ### With Tx Block Connection Latest Epoch
-####  the last checkpoint of epoch 97 is 8097645
-####  last tx number of the checkpoint is 261225985
 
 ><pre>{
 >  epoch {
->    transactionBlockConnection(first: 20, after: "261225985") {
+>    transactionBlocks(first: 20, after: "eyJjIjoyNjkzMzMyNCwidCI6MTEwMTYxMDQ4MywidGMiOjI2ODUxMjQ4fQ") {
 >      pageInfo {
 >        hasNextPage
 >        endCursor
@@ -722,22 +660,20 @@
 ### Event Connection
 
 ><pre>{
->  eventConnection(
->    filter: {eventPackage: "0x3164fcf73eb6b41ff3d2129346141bd68469964c2d95a5b1533e8d16e6ea6e13", eventModule: "Market", eventType: "ChangePriceEvent<0x2::sui::SUI>"}
+>  events(
+>    filter: {
+>      eventType: "0x3164fcf73eb6b41ff3d2129346141bd68469964c2d95a5b1533e8d16e6ea6e13::Market::ChangePriceEvent<0x2::sui::SUI>"
+>    }
 >  ) {
 >    nodes {
 >      sendingModule {
 >        name
->        package {
->          asObject {
->            digest
->          }
->        }
+>        package { digest }
 >      }
 >      type {
 >        repr
 >      }
->      senders {
+>      sender {
 >        address
 >      }
 >      timestamp
@@ -750,11 +686,14 @@
 ### <a id=524281></a>
 ### Filter By Emitting Package Module And Event Type
 
-><pre>query byEmittingPackageModuleAndEventType {
->  eventConnection(
+><pre>query ByEmittingPackageModuleAndEventType {
+>  events(
 >    first: 1
->    after: "85173:0"
->    filter: {emittingPackage: "0x3", emittingModule: "sui_system", eventPackage: "0x3", eventModule: "validator", eventType: "StakingRequestEvent"}
+>    after: "eyJ0eCI6Njc2MywiZSI6MCwiYyI6MjI4MDA3NDJ9"
+>    filter: {
+>      emittingModule: "0x3::sui_system",
+>      eventType: "0x3::validator::StakingRequestEvent"
+>    }
 >  ) {
 >    pageInfo {
 >      hasNextPage
@@ -767,7 +706,7 @@
 >      type {
 >        repr
 >      }
->      senders {
+>      sender {
 >        address
 >      }
 >      timestamp
@@ -780,10 +719,12 @@
 ### <a id=524282></a>
 ### Filter By Sender
 
-><pre>query byTxSender {
->  eventConnection(
+><pre>query ByTxSender {
+>  events(
 >    first: 1
->    filter: {sender: "0xdff57c401e125a7e0e06606380560b459a179aacd08ed396d0162d57dbbdadfb"}
+>    filter: {
+>      sender: "0xdff57c401e125a7e0e06606380560b459a179aacd08ed396d0162d57dbbdadfb"
+>    }
 >  ) {
 >    pageInfo {
 >      hasNextPage
@@ -796,7 +737,7 @@
 >      type {
 >        repr
 >      }
->      senders {
+>      sender {
 >        address
 >      }
 >      timestamp
@@ -812,7 +753,7 @@
 ### Name Service
 
 ><pre>{
->  resolveNameServiceAddress(name: "example.sui") {
+>  resolveSuinsAddress(domain: "example.sui") {
 >    address
 >  }
 >  address(
@@ -826,7 +767,7 @@
 >      coinObjectCount
 >      totalBalance
 >    }
->    defaultNameServiceName
+>    defaultSuinsName
 >  }
 >}</pre>
 
@@ -844,12 +785,26 @@
 >    digest
 >    storageRebate
 >    owner {
->      defaultNameServiceName
+>      __typename
+>      ... on Shared {
+>        initialSharedVersion
+>      }
+>      __typename
+>      ... on Parent {
+>        parent {
+>          address
+>        }
+>      }
+>      __typename
+>      ... on AddressOwner {
+>        owner {
+>          address
+>        }
+>      }
 >    }
 >    previousTransactionBlock {
 >      digest
 >    }
->    kind
 >  }
 >}</pre>
 
@@ -860,17 +815,30 @@
 ####  Filter on objectIds
 
 ><pre>{
->  objectConnection(
->    filter: {
->      objectIds: [
->        "0x4bba2c7b9574129c272bca8f58594eba933af8001257aa6e0821ad716030f149"
->      ]
->    }
->  ) {
+>  objects(filter: { objectIds: [
+>    "0x4bba2c7b9574129c272bca8f58594eba933af8001257aa6e0821ad716030f149"
+>  ]}) {
 >    edges {
 >      node {
 >        storageRebate
->        kind
+>        owner {
+>          __typename
+>          ... on Shared {
+>            initialSharedVersion
+>          }
+>          __typename
+>          ... on Parent {
+>            parent {
+>              address
+>            }
+>          }
+>          __typename
+>          ... on AddressOwner {
+>            owner {
+>              address
+>            }
+>          }
+>        }
 >      }
 >    }
 >  }
@@ -880,14 +848,12 @@
 ### Filter On Generic Type
 
 ><pre>{
->  objectConnection(filter: {type: "0x2::coin::Coin"}) {
+>  objects(filter: {type: "0x2::coin::Coin"}) {
 >    edges {
 >      node {
 >        asMoveObject {
 >          contents {
->            type {
->              repr
->            }
+>            type { repr }
 >          }
 >        }
 >      }
@@ -899,7 +865,7 @@
 ### Filter On Type
 
 ><pre>{
->  objectConnection(filter: {type: "0x3::staking_pool::StakedSui"}) {
+>  objects(filter: {type: "0x3::staking_pool::StakedSui"}) {
 >    edges {
 >      node {
 >        asMoveObject {
@@ -919,15 +885,30 @@
 ####  Filter on owner
 
 ><pre>{
->  objectConnection(
->    filter: {
->      owner: "0x23b7b0e2badb01581ba9b3ab55587d8d9fdae087e0cfc79f2c72af36f5059439"
->    }
->  ) {
+>  objects(filter: {
+>    owner: "0x23b7b0e2badb01581ba9b3ab55587d8d9fdae087e0cfc79f2c72af36f5059439"
+>  }) {
 >    edges {
 >      node {
 >        storageRebate
->        kind
+>        owner {
+>          __typename
+>          ... on Shared {
+>            initialSharedVersion
+>          }
+>          __typename
+>          ... on Parent {
+>            parent {
+>              address
+>            }
+>          }
+>          __typename
+>          ... on AddressOwner {
+>            owner {
+>              address
+>            }
+>          }
+>        }
 >      }
 >    }
 >  }
@@ -937,16 +918,14 @@
 ### Object Connection
 
 ><pre>{
->  objectConnection {
+>  objects {
 >    nodes {
 >      version
 >      digest
 >      storageRebate
 >      previousTransactionBlock {
 >        digest
->        sender {
->          defaultNameServiceName
->        }
+>        sender { defaultSuinsName }
 >        gasInput {
 >          gasPrice
 >          gasBudget
@@ -1054,11 +1033,11 @@
 >  }
 >}
 >
->query DynamicFieldConnection {
+>query DynamicFields {
 >  object(
 >    address: "0xb57fba584a700a5bcb40991e1b2e6bf68b0f3896d767a0da92e69de73de226ac"
 >  ) {
->    dynamicFieldConnection {
+>    dynamicFields {
 >      pageInfo {
 >        hasNextPage
 >        endCursor
@@ -1226,24 +1205,26 @@
 >      }
 >      totalBalance
 >    }
->    stakedSuiConnection {
+>    stakedSuis {
 >      nodes {
 >        status
 >        principal
 >        estimatedReward
->        activeEpoch {
+>        activatedEpoch {
 >          epochId
 >          referenceGasPrice
 >          validatorSet {
 >            activeValidators {
->              name
->              description
->              exchangeRatesSize
+>              nodes {
+>                name
+>                description
+>                exchangeRatesSize
+>              }
 >            }
 >            totalStake
 >          }
 >        }
->        requestEpoch {
+>        requestedEpoch {
 >          epochId
 >        }
 >      }
@@ -1255,47 +1236,41 @@
 ## Sui System State Summary
 ### <a id=1048560></a>
 ### Sui System State Summary
+####  Get the latest sui system state data
 
 ><pre>{
->  latestSuiSystemState {
->    systemStateVersion
->    referenceGasPrice
->    startTimestamp
->    validatorSet {
->      totalStake
->      pendingActiveValidatorsSize
->      stakePoolMappingsSize
->      inactivePoolsSize
->      validatorCandidatesSize
->      activeValidators {
->        name
->        description
->        imageUrl
->        projectUrl
->        exchangeRates {
->          asObject {
->            storageRebate
->            bcs
->            kind
->          }
->          hasPublicTransfer
->        }
->        exchangeRatesSize
->        stakingPoolActivationEpoch
->        stakingPoolSuiBalance
->        rewardsPool
->        poolTokenBalance
->        pendingStake
->        pendingTotalSuiWithdraw
->        pendingPoolTokenWithdraw
->        votingPower
->        gasPrice
->        commissionRate
->        nextEpochStake
->        nextEpochGasPrice
->        nextEpochCommissionRate
->        atRisk
+>  epoch {
+>    storageFund {
+>      totalObjectStorageRebates
+>      nonRefundableBalance
+>    }
+>    safeMode {
+>      enabled
+>      gasSummary {
+>         computationCost
+>         storageCost
+>         storageRebate
+>         nonRefundableStorageFee
 >      }
+>    }
+>    systemStateVersion
+>    systemParameters {
+>      durationMs
+>      stakeSubsidyStartEpoch
+>      minValidatorCount
+>      maxValidatorCount
+>      minValidatorJoiningStake
+>      validatorLowStakeThreshold
+>      validatorVeryLowStakeThreshold
+>      validatorLowStakeGracePeriod
+>    }
+>    systemStakeSubsidy {
+>      balance
+>      distributionCounter
+>      currentDistributionAmount
+>      periodLength
+>      decreaseRate
+>
 >    }
 >  }
 >}</pre>
@@ -1366,7 +1341,7 @@
 >          storageRebate
 >        }
 >        ... on GenesisTransaction {
->          objectConnection {
+>          objects {
 >            nodes { address }
 >          }
 >        }
@@ -1382,7 +1357,7 @@
 ####  Filter on before_ and after_checkpoint. If both are provided, before must be greater than after
 
 ><pre>{
->  transactionBlockConnection(
+>  transactionBlocks(
 >    filter: { afterCheckpoint: 10, beforeCheckpoint: 20 }
 >  ) {
 >    nodes {
@@ -1402,7 +1377,7 @@
 ####  Filter on changedObject
 
 ><pre>{
->  transactionBlockConnection(
+>  transactionBlocks(
 >    filter: {
 >      changedObject: "0x0000000000000000000000000000000000000000000000000000000000000006"
 >    }
@@ -1424,7 +1399,7 @@
 ####  Filter on inputObject
 
 ><pre>{
->  transactionBlockConnection(
+>  transactionBlocks(
 >    filter: {
 >      inputObject: "0x0000000000000000000000000000000000000000000000000000000000000006"
 >    }
@@ -1442,14 +1417,14 @@
 >}</pre>
 
 ### <a id=1179633></a>
-### Input Object Sent Addr Filter
+### Input Object Sign Addr Filter
 ####  multiple filters
 
 ><pre>{
->  transactionBlockConnection(
+>  transactionBlocks(
 >    filter: {
 >      inputObject: "0x0000000000000000000000000000000000000000000000000000000000000006"
->      sentAddress: "0x0000000000000000000000000000000000000000000000000000000000000000"
+>      signAddress: "0x0000000000000000000000000000000000000000000000000000000000000000"
 >    }
 >  ) {
 >    nodes {
@@ -1476,11 +1451,7 @@
 ####  Filtering on package
 
 ><pre>{
->  transactionBlockConnection(
->    filter: {
->      package: "0x0000000000000000000000000000000000000000000000000000000000000003"
->    }
->  ) {
+>  transactionBlocks(filter: { function: "0x3" }) {
 >    nodes {
 >      sender {
 >        address
@@ -1498,10 +1469,9 @@
 ####  Filtering on package and module
 
 ><pre>{
->  transactionBlockConnection(
+>  transactionBlocks(
 >    filter: {
->      package: "0x0000000000000000000000000000000000000000000000000000000000000003"
->      module: "sui_system"
+>      function: "0x3::sui_system"
 >    }
 >  ) {
 >    nodes {
@@ -1521,11 +1491,9 @@
 ####  Filtering on package, module and function
 
 ><pre>{
->  transactionBlockConnection(
+>  transactionBlocks(
 >    filter: {
->      package: "0x0000000000000000000000000000000000000000000000000000000000000003"
->      module: "sui_system"
->      function: "request_withdraw_stake"
+>      function: "0x3::sui_system::request_withdraw_stake"
 >    }
 >  ) {
 >    nodes {
@@ -1545,7 +1513,7 @@
 ####  Filter on recvAddress
 
 ><pre>{
->  transactionBlockConnection(
+>  transactionBlocks(
 >    filter: {
 >      recvAddress: "0x0000000000000000000000000000000000000000000000000000000000000000"
 >    }
@@ -1563,13 +1531,13 @@
 >}</pre>
 
 ### <a id=1179638></a>
-### Sent Addr Filter
-####  Filter on sign or sentAddress
+### Sign Addr Filter
+####  Filter on signing address
 
 ><pre>{
->  transactionBlockConnection(
+>  transactionBlocks(
 >    filter: {
->      sentAddress: "0x0000000000000000000000000000000000000000000000000000000000000000"
+>      signAddress: "0x0000000000000000000000000000000000000000000000000000000000000000"
 >    }
 >  ) {
 >    nodes {
@@ -1589,7 +1557,7 @@
 ####  Filter on transactionIds
 
 ><pre>{
->  transactionBlockConnection(
+>  transactionBlocks(
 >    filter: { transactionIds: ["DtQ6v6iJW4wMLgadENPUCEUS5t8AP7qvdG5jX84T1akR"] }
 >  ) {
 >    nodes {
@@ -1609,7 +1577,7 @@
 ####  Filter on TransactionKind (only SYSTEM_TX or PROGRAMMABLE_TX)
 
 ><pre>{
->  transactionBlockConnection(filter: { kind: SYSTEM_TX }) {
+>  transactionBlocks(filter: { kind: SYSTEM_TX }) {
 >    nodes {
 >      sender {
 >        address
@@ -1627,7 +1595,7 @@
 ####  Fetch some default amount of transactions, ascending
 
 ><pre>{
->  transactionBlockConnection {
+>  transactionBlocks {
 >    nodes {
 >      digest
 >      effects {
@@ -1669,7 +1637,24 @@
 >    address: "0x0bba1e7d907dc2832edfc3bf4468b6deacd9a2df435a35b17e640e135d2d5ddc"
 >  ) {
 >    version
->    kind
+>    owner {
+>      __typename
+>      ... on Shared {
+>        initialSharedVersion
+>      }
+>      __typename
+>      ... on Parent {
+>        parent {
+>          address
+>        }
+>      }
+>      __typename
+>      ... on AddressOwner {
+>        owner {
+>          address
+>        }
+>      }
+>    }
 >    previousTransactionBlock {
 >      effects {
 >        status
@@ -1686,22 +1671,26 @@
 >          }
 >        }
 >        balanceChanges {
->          owner {
->            address
->            balance(type: "0x2::sui::SUI") {
->              totalBalance
+>          nodes {
+>            owner {
+>              address
+>              balance(type: "0x2::sui::SUI") {
+>                totalBalance
+>              }
 >            }
->          }
->          amount
->          coinType {
->            repr
->            signature
->            layout
+>            amount
+>            coinType {
+>              repr
+>              signature
+>              layout
+>            }
 >          }
 >        }
 >        dependencies {
->          sender {
->            address
+>          nodes {
+>            sender {
+>              address
+>            }
 >          }
 >        }
 >      }
